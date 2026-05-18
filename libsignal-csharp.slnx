@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="source/Signal.Interop.Tests/Signal.Interop.Tests.csproj" />
+  <Project Path="source/Signal.Interop/Signal.Interop.csproj" />
+</Solution>
