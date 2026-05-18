@@ -215,6 +215,7 @@ pub extern "C" fn signal_zkgroup_group_master_key_serialize(
         let mk = unsafe { &*master_key.cast::<GroupMasterKey>() };
         let mut serialized = zkgroup::serialize(mk);
         if serialized.len() != GROUP_MASTER_KEY_LEN {
+            serialized.zeroize();
             return STATUS_PANIC;
         }
         unsafe {
