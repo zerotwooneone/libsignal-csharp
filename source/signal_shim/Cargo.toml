@@ -8,5 +8,5 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-# Pull the modern Signal Rust core directly from GitHub
-libsignal-protocol = { git = "https://github.com/signalapp/libsignal.git" }
+# We are now pointing to the local submodule so the AI can read the source
+libsignal-protocol = { path = "../../external/libsignal/rust/protocol" }
