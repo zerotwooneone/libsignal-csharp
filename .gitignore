@@ -1,0 +1,9 @@
+# .NET / C#
+[Bb]in/
+[Oo]bj/
+.vs/
+*.user
+
+# Rust / Cargo
+/signal_shim/target/
+**/*.rs.bk

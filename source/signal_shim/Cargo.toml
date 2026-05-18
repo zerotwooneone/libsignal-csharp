@@ -1,0 +1,12 @@
+[package]
+name = "signal_shim"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+# 'cdylib' tells Rust to strip Rust-specific metadata and compile a clean native library (.dll/.so/.dylib)
+crate-type = ["cdylib"]
+
+[dependencies]
+# Pull the modern Signal Rust core directly from GitHub
+libsignal-protocol = { git = "https://github.com/signalapp/libsignal.git" }

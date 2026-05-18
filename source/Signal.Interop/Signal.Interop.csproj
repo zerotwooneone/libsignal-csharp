@@ -1,0 +1,32 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <OutputPath>..\..\dist</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <Target Name="BuildRustShim" BeforeTargets="PreBuildEvent">
+    <Message Importance="High" Text="Building Rust signal_shim..." />
+    <Exec Command="cargo build --release" WorkingDirectory="$(MSBuildProjectDirectory)\..\signal_shim" />
+  </Target>
+
+  <ItemGroup>
+    <None Include="..\signal_shim\target\release\signal_shim.dll" Condition="$([MSBuild]::IsOsPlatform('Windows'))">
+      <Link>signal_shim.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\signal_shim\target\release\libsignal_shim.so" Condition="$([MSBuild]::IsOsPlatform('Linux'))">
+      <Link>libsignal_shim.so</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\signal_shim\target\release\libsignal_shim.dylib" Condition="$([MSBuild]::IsOsPlatform('OSX'))">
+      <Link>libsignal_shim.dylib</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
