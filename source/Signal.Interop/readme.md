@@ -1,4 +1,4 @@
-﻿# Signal.Interop API Surface
+# Signal.Interop API Surface
 
 This section documents the intended *public* API surface of this repository as implemented.
 
@@ -20,6 +20,16 @@ Primary entrypoint:
 
     - **`public static GroupSecretParamsSafeHandle DeriveGroupSecretParams(GroupMasterKeySafeHandle masterKey)`**
         - Derives `GroupSecretParams` deterministically from a persisted `GroupMasterKey`.
+
+    - **`public static void GetGroupId(GroupSecretParamsSafeHandle handle, Span<byte> outBuffer)`**
+        - Writes exactly 32 bytes of the group identifier.
+        - Allocation-free.
+        - Throws `ArgumentException` if the destination buffer length is not exactly 32.
+
+    - **`public static void GetBlobKey(GroupSecretParamsSafeHandle handle, Span<byte> outBuffer)`**
+        - Writes exactly 32 bytes of the blob key.
+        - Allocation-free.
+        - Throws `ArgumentException` if the destination buffer length is not exactly 32.
 
     - **`public static byte[] SerializeGroupMasterKey(GroupMasterKeySafeHandle masterKey)`**
     - **`public static void SerializeGroupMasterKey(GroupMasterKeySafeHandle masterKey, Span<byte> buffer32)`**
@@ -70,6 +80,10 @@ These functions are exported from the native library and are consumed by the C# 
     - `int32 signal_zkgroup_group_secret_params_generate(const uint8_t* randomness32, size_t randomness_len, void** out_secret_params)`
     - `int32 signal_zkgroup_group_secret_params_get_master_key(const void* secret_params, void** out_master_key)`
     - `int32 signal_zkgroup_group_secret_params_derive_from_master_key(const void* master_key, void** out_secret_params)`
+    - `int32 signal_zkgroup_group_secret_params_get_group_id(const void* secret_params, uint8_t* out_buffer, size_t buffer_len)`
+        - Requires `buffer_len == 32`.
+    - `int32 signal_zkgroup_group_secret_params_get_blob_key(const void* secret_params, uint8_t* out_buffer, size_t buffer_len)`
+        - Requires `buffer_len == 32`.
 
 - **GroupMasterKey persistence**
     - `int32 signal_zkgroup_group_master_key_serialize(const void* master_key, uint8_t* out_buffer, size_t buffer_len)`
