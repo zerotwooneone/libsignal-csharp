@@ -3,6 +3,7 @@
 use core::ffi::c_void;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use zeroize::Zeroize;
+use zkgroup::common::sho::Sho;
 
 /// `#[no_mangle]` is critical. It turns off Rust's name mangling so the compiled 
 /// function retains the exact name "signal_shim_test_connection" in the exported DLL.
@@ -19,6 +20,8 @@ const STATUS_PANIC: i32 = 2;
 const STATUS_DESERIALIZATION_FAILURE: i32 = 4;
 
 const GROUP_MASTER_KEY_LEN: usize = 32;
+const GROUP_SECRET_PARAMS_DERIVE_LABEL: &[u8] =
+    b"Signal_ZKGroup_20200424_GroupMasterKey_GroupSecretParams_DeriveFromMasterKey";
 
 type GroupMasterKey = zkgroup::groups::GroupMasterKey;
 type GroupSecretParams = zkgroup::groups::GroupSecretParams;
@@ -40,6 +43,71 @@ fn wipe_boxed_value<T: Copy>(ptr: *mut T) {
         let bytes = std::slice::from_raw_parts_mut(ptr.cast::<u8>(), std::mem::size_of::<T>());
         bytes.zeroize();
         drop(Box::from_raw(ptr));
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_group_secret_params_get_group_id(
+    secret_params: *const c_void,
+    out_buffer: *mut u8,
+    buffer_len: usize,
+) -> i32 {
+    if secret_params.is_null() || out_buffer.is_null() || buffer_len != GROUP_MASTER_KEY_LEN {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let params = unsafe { &*secret_params.cast::<GroupSecretParams>() };
+        let group_id = params.get_group_identifier();
+        unsafe {
+            std::ptr::copy_nonoverlapping(group_id.as_ptr(), out_buffer, GROUP_MASTER_KEY_LEN);
+        }
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_group_secret_params_get_blob_key(
+    secret_params: *const c_void,
+    out_buffer: *mut u8,
+    buffer_len: usize,
+) -> i32 {
+    if secret_params.is_null() || out_buffer.is_null() || buffer_len != GROUP_MASTER_KEY_LEN {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let params = unsafe { &*secret_params.cast::<GroupSecretParams>() };
+
+        let master_key = params.get_master_key();
+        let mut master_key_bytes = zkgroup::serialize(&master_key);
+        if master_key_bytes.len() != GROUP_MASTER_KEY_LEN {
+            master_key_bytes.zeroize();
+            return STATUS_PANIC;
+        }
+
+        let mut sho = Sho::new(GROUP_SECRET_PARAMS_DERIVE_LABEL, &master_key_bytes);
+        let _group_id: [u8; GROUP_MASTER_KEY_LEN] = sho.squeeze_as_array();
+        let mut blob_key: [u8; GROUP_MASTER_KEY_LEN] = sho.squeeze_as_array();
+
+        unsafe {
+            std::ptr::copy_nonoverlapping(blob_key.as_ptr(), out_buffer, GROUP_MASTER_KEY_LEN);
+        }
+
+        blob_key.zeroize();
+        master_key_bytes.zeroize();
+
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
     }
 }
 

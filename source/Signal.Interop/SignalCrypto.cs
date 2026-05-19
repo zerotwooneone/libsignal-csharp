@@ -54,6 +54,20 @@ public static partial class SignalCrypto
             nint masterKey,
             out nint outSecretParams);
 
+        [LibraryImport(DllName, EntryPoint = "signal_zkgroup_group_secret_params_get_group_id")]
+        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+        internal static unsafe partial int signal_zkgroup_group_secret_params_get_group_id(
+            nint secretParams,
+            byte* outBuffer,
+            nuint bufferLen);
+
+        [LibraryImport(DllName, EntryPoint = "signal_zkgroup_group_secret_params_get_blob_key")]
+        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+        internal static unsafe partial int signal_zkgroup_group_secret_params_get_blob_key(
+            nint secretParams,
+            byte* outBuffer,
+            nuint bufferLen);
+
         [LibraryImport(DllName, EntryPoint = "signal_zkgroup_group_master_key_serialize")]
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
         internal static unsafe partial int signal_zkgroup_group_master_key_serialize(
@@ -91,6 +105,86 @@ public static partial class SignalCrypto
                     out nint secretParams);
                 ThrowOnError(status);
                 return new GroupSecretParamsSafeHandle(secretParams);
+            }
+        }
+    }
+
+    public static void GetGroupId(GroupSecretParamsSafeHandle handle, Span<byte> outBuffer)
+    {
+        ArgumentNullException.ThrowIfNull(handle);
+        if (handle.IsInvalid)
+        {
+            throw new ArgumentException("Handle is invalid.", nameof(handle));
+        }
+
+        if (outBuffer.Length != GroupMasterKeyLength)
+        {
+            throw new ArgumentException($"Output buffer must be exactly {GroupMasterKeyLength} bytes.", nameof(outBuffer));
+        }
+
+        bool addedRef = false;
+        try
+        {
+            handle.DangerousAddRef(ref addedRef);
+            nint secretParams = handle.DangerousGetHandle();
+
+            unsafe
+            {
+                fixed (byte* pOut = outBuffer)
+                {
+                    int status = Native.signal_zkgroup_group_secret_params_get_group_id(
+                        secretParams,
+                        pOut,
+                        (nuint)outBuffer.Length);
+                    ThrowOnError(status);
+                }
+            }
+        }
+        finally
+        {
+            if (addedRef)
+            {
+                handle.DangerousRelease();
+            }
+        }
+    }
+
+    public static void GetBlobKey(GroupSecretParamsSafeHandle handle, Span<byte> outBuffer)
+    {
+        ArgumentNullException.ThrowIfNull(handle);
+        if (handle.IsInvalid)
+        {
+            throw new ArgumentException("Handle is invalid.", nameof(handle));
+        }
+
+        if (outBuffer.Length != GroupMasterKeyLength)
+        {
+            throw new ArgumentException($"Output buffer must be exactly {GroupMasterKeyLength} bytes.", nameof(outBuffer));
+        }
+
+        bool addedRef = false;
+        try
+        {
+            handle.DangerousAddRef(ref addedRef);
+            nint secretParams = handle.DangerousGetHandle();
+
+            unsafe
+            {
+                fixed (byte* pOut = outBuffer)
+                {
+                    int status = Native.signal_zkgroup_group_secret_params_get_blob_key(
+                        secretParams,
+                        pOut,
+                        (nuint)outBuffer.Length);
+                    ThrowOnError(status);
+                }
+            }
+        }
+        finally
+        {
+            if (addedRef)
+            {
+                handle.DangerousRelease();
             }
         }
     }

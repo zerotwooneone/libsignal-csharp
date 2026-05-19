@@ -40,6 +40,60 @@ public class InteropTests
     }
 
     [Fact]
+    public void GroupSecretParams_GetGroupIdAndBlobKey_With32ByteBuffers_WritesBytes()
+    {
+        // Arrange
+        Span<byte> randomness = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        randomness.Fill(9);
+
+        using GroupSecretParamsSafeHandle secretParams = SignalCrypto.GenerateGroupSecretParams(randomness);
+
+        Span<byte> groupId = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        Span<byte> blobKey = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+
+        // Act
+        SignalCrypto.GetGroupId(secretParams, groupId);
+        SignalCrypto.GetBlobKey(secretParams, blobKey);
+
+        // Assert
+        bool anyGroupIdNonZero = false;
+        bool anyBlobKeyNonZero = false;
+        for (int i = 0; i < SignalCrypto.GroupMasterKeyLength; i++)
+        {
+            anyGroupIdNonZero |= groupId[i] != 0;
+            anyBlobKeyNonZero |= blobKey[i] != 0;
+        }
+
+        Assert.True(anyGroupIdNonZero);
+        Assert.True(anyBlobKeyNonZero);
+    }
+
+    [Fact]
+    public void GroupSecretParams_GetBlobKey_IsDeterministicForMasterKey()
+    {
+        // Arrange
+        Span<byte> randomness = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        randomness.Fill(11);
+
+        using GroupSecretParamsSafeHandle secretParamsA = SignalCrypto.GenerateGroupSecretParams(randomness);
+        using GroupMasterKeySafeHandle masterKey = SignalCrypto.GetGroupMasterKey(secretParamsA);
+        using GroupSecretParamsSafeHandle secretParamsB = SignalCrypto.DeriveGroupSecretParams(masterKey);
+
+        Span<byte> blobKeyA = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        Span<byte> blobKeyB = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+
+        // Act
+        SignalCrypto.GetBlobKey(secretParamsA, blobKeyA);
+        SignalCrypto.GetBlobKey(secretParamsB, blobKeyB);
+
+        // Assert
+        for (int i = 0; i < SignalCrypto.GroupMasterKeyLength; i++)
+        {
+            Assert.Equal(blobKeyA[i], blobKeyB[i]);
+        }
+    }
+
+    [Fact]
     public void GroupMasterKey_SerializeDeserialize_RoundTripsBytes()
     {
         // Arrange
@@ -68,6 +122,54 @@ public class InteropTests
         try
         {
             _ = SignalCrypto.GenerateGroupSecretParams(randomness);
+        }
+        catch (ArgumentException)
+        {
+            // Assert
+            return;
+        }
+
+        Assert.Fail("Expected ArgumentException was not thrown.");
+    }
+
+    [Fact]
+    public void GetGroupId_WithWrongLengthOutputBuffer_ThrowsArgumentException()
+    {
+        // Arrange
+        Span<byte> randomness = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        randomness.Fill(12);
+        using GroupSecretParamsSafeHandle secretParams = SignalCrypto.GenerateGroupSecretParams(randomness);
+
+        Span<byte> outBuffer = stackalloc byte[SignalCrypto.GroupMasterKeyLength - 1];
+
+        // Act
+        try
+        {
+            SignalCrypto.GetGroupId(secretParams, outBuffer);
+        }
+        catch (ArgumentException)
+        {
+            // Assert
+            return;
+        }
+
+        Assert.Fail("Expected ArgumentException was not thrown.");
+    }
+
+    [Fact]
+    public void GetBlobKey_WithWrongLengthOutputBuffer_ThrowsArgumentException()
+    {
+        // Arrange
+        Span<byte> randomness = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        randomness.Fill(13);
+        using GroupSecretParamsSafeHandle secretParams = SignalCrypto.GenerateGroupSecretParams(randomness);
+
+        Span<byte> outBuffer = stackalloc byte[SignalCrypto.GroupMasterKeyLength - 1];
+
+        // Act
+        try
+        {
+            SignalCrypto.GetBlobKey(secretParams, outBuffer);
         }
         catch (ArgumentException)
         {

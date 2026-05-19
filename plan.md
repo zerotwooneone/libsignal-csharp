@@ -145,6 +145,14 @@ Suggested minimal error code set:
 - **Derive secret params from master key**
   - `int32 signal_zkgroup_group_secret_params_derive_from_master_key(const void* master_key, void** out_secret_params)`
 
+- **Get group ID**
+  - `int32 signal_zkgroup_group_secret_params_get_group_id(const void* secret_params, uint8_t* out_buffer, size_t buffer_len)`
+    - Requires `buffer_len == 32`.
+
+- **Get blob key**
+  - `int32 signal_zkgroup_group_secret_params_get_blob_key(const void* secret_params, uint8_t* out_buffer, size_t buffer_len)`
+    - Requires `buffer_len == 32`.
+
 - **Destructors (mandatory)**
   - `void signal_zkgroup_group_master_key_free(void* master_key)`
   - `void signal_zkgroup_group_secret_params_free(void* secret_params)`
