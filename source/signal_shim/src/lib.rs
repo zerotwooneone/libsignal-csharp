@@ -4,6 +4,8 @@ use core::ffi::c_void;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use zeroize::Zeroize;
 use zkgroup::common::sho::Sho;
+use zkgroup::common::simple_types::Timestamp;
+use libsignal_core::{Aci, Pni};
 
 /// `#[no_mangle]` is critical. It turns off Rust's name mangling so the compiled 
 /// function retains the exact name "signal_shim_test_connection" in the exported DLL.
@@ -17,14 +19,24 @@ pub extern "C" fn signal_shim_test_connection() -> i32 {
 const STATUS_OK: i32 = 0;
 const STATUS_INVALID_ARGUMENT: i32 = 1;
 const STATUS_PANIC: i32 = 2;
+const STATUS_VERIFICATION_FAILURE: i32 = 3;
 const STATUS_DESERIALIZATION_FAILURE: i32 = 4;
 
 const GROUP_MASTER_KEY_LEN: usize = 32;
+const UUID_LEN: usize = 16;
 const GROUP_SECRET_PARAMS_DERIVE_LABEL: &[u8] =
     b"Signal_ZKGroup_20200424_GroupMasterKey_GroupSecretParams_DeriveFromMasterKey";
 
 type GroupMasterKey = zkgroup::groups::GroupMasterKey;
 type GroupSecretParams = zkgroup::groups::GroupSecretParams;
+type GroupPublicParams = zkgroup::groups::GroupPublicParams;
+
+type ServerSecretParams = zkgroup::ServerSecretParams;
+type ServerPublicParams = zkgroup::ServerPublicParams;
+
+type AuthCredentialWithPniZkcResponse = zkgroup::api::auth::AuthCredentialWithPniZkcResponse;
+type AuthCredentialWithPniZkc = zkgroup::api::auth::AuthCredentialWithPniZkc;
+type AuthCredentialWithPniZkcPresentation = zkgroup::api::auth::AuthCredentialWithPniZkcPresentation;
 
 // WARNING: This is only safe for flat, Copy types that do not own nested heap allocations.
 // If upstream changes introduce fields like Vec/String (or any Drop-requiring ownership),
@@ -46,6 +58,51 @@ fn wipe_boxed_value<T: Copy>(ptr: *mut T) {
     }
 }
 
+fn free_boxed_value<T>(ptr: *mut T) {
+    if ptr.is_null() {
+        return;
+    }
+
+    unsafe {
+        drop(Box::from_raw(ptr));
+    }
+}
+
+fn write_serialized_to_buffer<T: serde::Serialize>(value: &T, out_buffer: *mut u8, buffer_len: usize) -> i32 {
+    if out_buffer.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let mut serialized = zkgroup::serialize(value);
+    if buffer_len != serialized.len() {
+        serialized.zeroize();
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(serialized.as_ptr(), out_buffer, serialized.len());
+    }
+
+    serialized.zeroize();
+    STATUS_OK
+}
+
+fn get_serialized_len<T: serde::Serialize>(value: &T, out_len: *mut usize) -> i32 {
+    if out_len.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let mut serialized = zkgroup::serialize(value);
+    let len = serialized.len();
+    serialized.zeroize();
+
+    unsafe {
+        *out_len = len;
+    }
+
+    STATUS_OK
+}
+
 #[no_mangle]
 pub extern "C" fn signal_zkgroup_group_secret_params_get_group_id(
     secret_params: *const c_void,
@@ -63,6 +120,560 @@ pub extern "C" fn signal_zkgroup_group_secret_params_get_group_id(
             std::ptr::copy_nonoverlapping(group_id.as_ptr(), out_buffer, GROUP_MASTER_KEY_LEN);
         }
         STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_group_secret_params_get_public_params(
+    secret_params: *const c_void,
+    out_public_params: *mut *mut c_void,
+) -> i32 {
+    if out_public_params.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    unsafe {
+        *out_public_params = std::ptr::null_mut();
+    }
+
+    if secret_params.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let params = unsafe { &*secret_params.cast::<GroupSecretParams>() };
+        let public_params = params.get_public_params();
+        let boxed = Box::new(public_params);
+        unsafe {
+            *out_public_params = Box::into_raw(boxed).cast::<c_void>();
+        }
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => {
+            unsafe {
+                *out_public_params = std::ptr::null_mut();
+            }
+            STATUS_PANIC
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_group_public_params_free(public_params: *mut c_void) {
+    wipe_boxed_value(public_params.cast::<GroupPublicParams>());
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_group_public_params_get_serialized_len(
+    public_params: *const c_void,
+    out_len: *mut usize,
+) -> i32 {
+    if public_params.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let pp = unsafe { &*public_params.cast::<GroupPublicParams>() };
+        get_serialized_len(pp, out_len)
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_group_public_params_serialize(
+    public_params: *const c_void,
+    out_buffer: *mut u8,
+    buffer_len: usize,
+) -> i32 {
+    if public_params.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let pp = unsafe { &*public_params.cast::<GroupPublicParams>() };
+        write_serialized_to_buffer(pp, out_buffer, buffer_len)
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_group_public_params_deserialize(
+    bytes: *const u8,
+    bytes_len: usize,
+    out_public_params: *mut *mut c_void,
+) -> i32 {
+    if out_public_params.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    unsafe {
+        *out_public_params = std::ptr::null_mut();
+    }
+
+    if bytes.is_null() || bytes_len == 0 {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let slice = unsafe { std::slice::from_raw_parts(bytes, bytes_len) };
+        let pp: GroupPublicParams = match zkgroup::deserialize(slice) {
+            Ok(v) => v,
+            Err(_) => return STATUS_DESERIALIZATION_FAILURE,
+        };
+
+        let boxed = Box::new(pp);
+        unsafe {
+            *out_public_params = Box::into_raw(boxed).cast::<c_void>();
+        }
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => {
+            unsafe {
+                *out_public_params = std::ptr::null_mut();
+            }
+            STATUS_PANIC
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_server_secret_params_generate(
+    randomness32: *const u8,
+    randomness_len: usize,
+    out_server_secret_params: *mut *mut c_void,
+) -> i32 {
+    if out_server_secret_params.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    unsafe {
+        *out_server_secret_params = std::ptr::null_mut();
+    }
+
+    if randomness32.is_null() || randomness_len != GROUP_MASTER_KEY_LEN {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let randomness = unsafe {
+            let slice = std::slice::from_raw_parts(randomness32, randomness_len);
+            let Ok(arr) = <[u8; GROUP_MASTER_KEY_LEN]>::try_from(slice) else {
+                return STATUS_INVALID_ARGUMENT;
+            };
+            arr
+        };
+
+        let params = ServerSecretParams::generate(randomness);
+        let boxed = Box::new(params);
+        unsafe {
+            *out_server_secret_params = Box::into_raw(boxed).cast::<c_void>();
+        }
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => {
+            unsafe {
+                *out_server_secret_params = std::ptr::null_mut();
+            }
+            STATUS_PANIC
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_server_secret_params_free(server_secret_params: *mut c_void) {
+    free_boxed_value(server_secret_params.cast::<ServerSecretParams>());
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_server_public_params_free(server_public_params: *mut c_void) {
+    free_boxed_value(server_public_params.cast::<ServerPublicParams>());
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_server_secret_params_get_public_params(
+    server_secret_params: *const c_void,
+    out_server_public_params: *mut *mut c_void,
+) -> i32 {
+    if out_server_public_params.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    unsafe {
+        *out_server_public_params = std::ptr::null_mut();
+    }
+
+    if server_secret_params.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let params = unsafe { &*server_secret_params.cast::<ServerSecretParams>() };
+        let public_params = params.get_public_params();
+        let boxed = Box::new(public_params);
+        unsafe {
+            *out_server_public_params = Box::into_raw(boxed).cast::<c_void>();
+        }
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => {
+            unsafe {
+                *out_server_public_params = std::ptr::null_mut();
+            }
+            STATUS_PANIC
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_server_public_params_get_serialized_len(
+    server_public_params: *const c_void,
+    out_len: *mut usize,
+) -> i32 {
+    if server_public_params.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let sp = unsafe { &*server_public_params.cast::<ServerPublicParams>() };
+        get_serialized_len(sp, out_len)
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_server_public_params_serialize(
+    server_public_params: *const c_void,
+    out_buffer: *mut u8,
+    buffer_len: usize,
+) -> i32 {
+    if server_public_params.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let sp = unsafe { &*server_public_params.cast::<ServerPublicParams>() };
+        write_serialized_to_buffer(sp, out_buffer, buffer_len)
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_server_public_params_deserialize(
+    bytes: *const u8,
+    bytes_len: usize,
+    out_server_public_params: *mut *mut c_void,
+) -> i32 {
+    if out_server_public_params.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    unsafe {
+        *out_server_public_params = std::ptr::null_mut();
+    }
+
+    if bytes.is_null() || bytes_len == 0 {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let slice = unsafe { std::slice::from_raw_parts(bytes, bytes_len) };
+        let sp: ServerPublicParams = match zkgroup::deserialize(slice) {
+            Ok(v) => v,
+            Err(_) => return STATUS_DESERIALIZATION_FAILURE,
+        };
+
+        let boxed = Box::new(sp);
+        unsafe {
+            *out_server_public_params = Box::into_raw(boxed).cast::<c_void>();
+        }
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => {
+            unsafe {
+                *out_server_public_params = std::ptr::null_mut();
+            }
+            STATUS_PANIC
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_auth_credential_with_pni_response_free(response: *mut c_void) {
+    free_boxed_value(response.cast::<AuthCredentialWithPniZkcResponse>());
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_auth_credential_with_pni_free(credential: *mut c_void) {
+    free_boxed_value(credential.cast::<AuthCredentialWithPniZkc>());
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_auth_credential_with_pni_presentation_free(presentation: *mut c_void) {
+    free_boxed_value(presentation.cast::<AuthCredentialWithPniZkcPresentation>());
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_auth_credential_with_pni_issue_credential(
+    aci_bytes: *const u8,
+    aci_len: usize,
+    pni_bytes: *const u8,
+    pni_len: usize,
+    redemption_time_epoch_seconds: u64,
+    server_secret_params: *const c_void,
+    randomness32: *const u8,
+    randomness_len: usize,
+    out_response: *mut *mut c_void,
+) -> i32 {
+    if out_response.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    unsafe {
+        *out_response = std::ptr::null_mut();
+    }
+
+    if aci_bytes.is_null() || pni_bytes.is_null() || aci_len != UUID_LEN || pni_len != UUID_LEN {
+        return STATUS_INVALID_ARGUMENT;
+    }
+    if server_secret_params.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+    if randomness32.is_null() || randomness_len != GROUP_MASTER_KEY_LEN {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let aci_arr = unsafe {
+            let slice = std::slice::from_raw_parts(aci_bytes, aci_len);
+            let Ok(arr) = <[u8; UUID_LEN]>::try_from(slice) else {
+                return STATUS_INVALID_ARGUMENT;
+            };
+            arr
+        };
+        let pni_arr = unsafe {
+            let slice = std::slice::from_raw_parts(pni_bytes, pni_len);
+            let Ok(arr) = <[u8; UUID_LEN]>::try_from(slice) else {
+                return STATUS_INVALID_ARGUMENT;
+            };
+            arr
+        };
+        let randomness = unsafe {
+            let slice = std::slice::from_raw_parts(randomness32, randomness_len);
+            let Ok(arr) = <[u8; GROUP_MASTER_KEY_LEN]>::try_from(slice) else {
+                return STATUS_INVALID_ARGUMENT;
+            };
+            arr
+        };
+
+        let aci = Aci::from_uuid_bytes(aci_arr);
+        let pni = Pni::from_uuid_bytes(pni_arr);
+        let redemption_time = Timestamp::from_epoch_seconds(redemption_time_epoch_seconds);
+
+        let params = unsafe { &*server_secret_params.cast::<ServerSecretParams>() };
+        let response = AuthCredentialWithPniZkcResponse::issue_credential(aci, pni, redemption_time, params, randomness);
+        let boxed = Box::new(response);
+        unsafe {
+            *out_response = Box::into_raw(boxed).cast::<c_void>();
+        }
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => {
+            unsafe {
+                *out_response = std::ptr::null_mut();
+            }
+            STATUS_PANIC
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_auth_credential_with_pni_response_receive(
+    response: *const c_void,
+    aci_bytes: *const u8,
+    aci_len: usize,
+    pni_bytes: *const u8,
+    pni_len: usize,
+    redemption_time_epoch_seconds: u64,
+    server_public_params: *const c_void,
+    out_credential: *mut *mut c_void,
+) -> i32 {
+    if out_credential.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    unsafe {
+        *out_credential = std::ptr::null_mut();
+    }
+
+    if response.is_null() || server_public_params.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+    if aci_bytes.is_null() || pni_bytes.is_null() || aci_len != UUID_LEN || pni_len != UUID_LEN {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let aci_arr = unsafe {
+            let slice = std::slice::from_raw_parts(aci_bytes, aci_len);
+            let Ok(arr) = <[u8; UUID_LEN]>::try_from(slice) else {
+                return STATUS_INVALID_ARGUMENT;
+            };
+            arr
+        };
+        let pni_arr = unsafe {
+            let slice = std::slice::from_raw_parts(pni_bytes, pni_len);
+            let Ok(arr) = <[u8; UUID_LEN]>::try_from(slice) else {
+                return STATUS_INVALID_ARGUMENT;
+            };
+            arr
+        };
+
+        let aci = Aci::from_uuid_bytes(aci_arr);
+        let pni = Pni::from_uuid_bytes(pni_arr);
+        let redemption_time = Timestamp::from_epoch_seconds(redemption_time_epoch_seconds);
+
+        let response_ref = unsafe { &*response.cast::<AuthCredentialWithPniZkcResponse>() };
+        let public_params = unsafe { &*server_public_params.cast::<ServerPublicParams>() };
+
+        let credential = match response_ref.clone().receive(aci, pni, redemption_time, public_params) {
+            Ok(v) => v,
+            Err(_) => return STATUS_VERIFICATION_FAILURE,
+        };
+
+        let boxed = Box::new(credential);
+        unsafe {
+            *out_credential = Box::into_raw(boxed).cast::<c_void>();
+        }
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => {
+            unsafe {
+                *out_credential = std::ptr::null_mut();
+            }
+            STATUS_PANIC
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_auth_credential_with_pni_present(
+    credential: *const c_void,
+    server_public_params: *const c_void,
+    group_secret_params: *const c_void,
+    randomness32: *const u8,
+    randomness_len: usize,
+    out_presentation: *mut *mut c_void,
+) -> i32 {
+    if out_presentation.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    unsafe {
+        *out_presentation = std::ptr::null_mut();
+    }
+
+    if credential.is_null() || server_public_params.is_null() || group_secret_params.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+    if randomness32.is_null() || randomness_len != GROUP_MASTER_KEY_LEN {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let randomness = unsafe {
+            let slice = std::slice::from_raw_parts(randomness32, randomness_len);
+            let Ok(arr) = <[u8; GROUP_MASTER_KEY_LEN]>::try_from(slice) else {
+                return STATUS_INVALID_ARGUMENT;
+            };
+            arr
+        };
+
+        let credential_ref = unsafe { &*credential.cast::<AuthCredentialWithPniZkc>() };
+        let public_params = unsafe { &*server_public_params.cast::<ServerPublicParams>() };
+        let group_secret = unsafe { &*group_secret_params.cast::<GroupSecretParams>() };
+
+        let presentation = credential_ref.present(public_params, group_secret, randomness);
+        let boxed = Box::new(presentation);
+        unsafe {
+            *out_presentation = Box::into_raw(boxed).cast::<c_void>();
+        }
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => {
+            unsafe {
+                *out_presentation = std::ptr::null_mut();
+            }
+            STATUS_PANIC
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_auth_credential_with_pni_presentation_verify(
+    presentation: *const c_void,
+    server_secret_params: *const c_void,
+    group_public_params: *const c_void,
+    redemption_time_epoch_seconds: u64,
+) -> i32 {
+    if presentation.is_null() || server_secret_params.is_null() || group_public_params.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let pres = unsafe { &*presentation.cast::<AuthCredentialWithPniZkcPresentation>() };
+        let server = unsafe { &*server_secret_params.cast::<ServerSecretParams>() };
+        let group_public = unsafe { &*group_public_params.cast::<GroupPublicParams>() };
+        let redemption_time = Timestamp::from_epoch_seconds(redemption_time_epoch_seconds);
+
+        match pres.verify(server, group_public, redemption_time) {
+            Ok(_) => STATUS_OK,
+            Err(_) => STATUS_VERIFICATION_FAILURE,
+        }
     }));
 
     match result {

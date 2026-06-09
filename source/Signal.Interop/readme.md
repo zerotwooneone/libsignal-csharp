@@ -31,6 +31,31 @@ Primary entrypoint:
         - Allocation-free.
         - Throws `ArgumentException` if the destination buffer length is not exactly 32.
 
+    - **`public static GroupPublicParamsSafeHandle GetGroupPublicParams(GroupSecretParamsSafeHandle handle)`**
+        - Extracts the group public parameters from secret params.
+        - Intended use: server-side verification of presentations.
+
+    - **`public static ServerSecretParamsSafeHandle GenerateServerSecretParams(ReadOnlySpan<byte> randomness32)`**
+        - Generates server secret parameters from exactly 32 bytes of randomness.
+        - Intended use: in-process test loops / private deployments.
+
+    - **`public static ServerPublicParamsSafeHandle GetServerPublicParams(ServerSecretParamsSafeHandle serverSecretParams)`**
+        - Extracts the server public parameters from server secret params.
+
+    - **`public static AuthCredentialWithPniResponseSafeHandle IssueAuthCredentialWithPni(ReadOnlySpan<byte> aciBytes16, ReadOnlySpan<byte> pniBytes16, ulong redemptionTimeEpochSeconds, ServerSecretParamsSafeHandle serverSecretParams, ReadOnlySpan<byte> randomness32)`**
+        - Server-side issuance step.
+        - `aciBytes16`/`pniBytes16` must be exactly 16 bytes each.
+
+    - **`public static AuthCredentialWithPniSafeHandle ReceiveAuthCredentialWithPni(AuthCredentialWithPniResponseSafeHandle response, ReadOnlySpan<byte> aciBytes16, ReadOnlySpan<byte> pniBytes16, ulong redemptionTimeEpochSeconds, ServerPublicParamsSafeHandle serverPublicParams)`**
+        - Client-side verification + extraction step.
+
+    - **`public static AuthCredentialWithPniPresentationSafeHandle PresentAuthCredentialWithPni(AuthCredentialWithPniSafeHandle credential, ServerPublicParamsSafeHandle serverPublicParams, GroupSecretParamsSafeHandle groupSecretParams, ReadOnlySpan<byte> randomness32)`**
+        - Client-side presentation generation.
+
+    - **`public static void VerifyAuthCredentialWithPniPresentation(AuthCredentialWithPniPresentationSafeHandle presentation, ServerSecretParamsSafeHandle serverSecretParams, GroupPublicParamsSafeHandle groupPublicParams, ulong redemptionTimeEpochSeconds)`**
+        - Server-side verification.
+        - Throws `CryptographicException` on verification failure.
+
     - **`public static byte[] SerializeGroupMasterKey(GroupMasterKeySafeHandle masterKey)`**
     - **`public static void SerializeGroupMasterKey(GroupMasterKeySafeHandle masterKey, Span<byte> buffer32)`**
         - Serializes a master key into exactly 32 bytes.
@@ -46,6 +71,12 @@ SafeHandle types (opaque native ownership):
 
 - **`public sealed class GroupSecretParamsSafeHandle : SafeHandle`**
 - **`public sealed class GroupMasterKeySafeHandle : SafeHandle`**
+- **`public sealed class GroupPublicParamsSafeHandle : SafeHandle`**
+- **`public sealed class ServerSecretParamsSafeHandle : SafeHandle`**
+- **`public sealed class ServerPublicParamsSafeHandle : SafeHandle`**
+- **`public sealed class AuthCredentialWithPniResponseSafeHandle : SafeHandle`**
+- **`public sealed class AuthCredentialWithPniSafeHandle : SafeHandle`**
+- **`public sealed class AuthCredentialWithPniPresentationSafeHandle : SafeHandle`**
 
 ### Usage notes (C#)
 
@@ -84,6 +115,29 @@ These functions are exported from the native library and are consumed by the C# 
         - Requires `buffer_len == 32`.
     - `int32 signal_zkgroup_group_secret_params_get_blob_key(const void* secret_params, uint8_t* out_buffer, size_t buffer_len)`
         - Requires `buffer_len == 32`.
+    - `int32 signal_zkgroup_group_secret_params_get_public_params(const void* secret_params, void** out_public_params)`
+    - `void signal_zkgroup_group_public_params_free(void* public_params)`
+    - `int32 signal_zkgroup_group_public_params_get_serialized_len(const void* public_params, size_t* out_len)`
+    - `int32 signal_zkgroup_group_public_params_serialize(const void* public_params, uint8_t* out_buffer, size_t buffer_len)`
+    - `int32 signal_zkgroup_group_public_params_deserialize(const uint8_t* bytes, size_t bytes_len, void** out_public_params)`
+
+- **Server params (Option B)**
+    - `int32 signal_zkgroup_server_secret_params_generate(const uint8_t* randomness32, size_t randomness_len, void** out_server_secret_params)`
+    - `void signal_zkgroup_server_secret_params_free(void* server_secret_params)`
+    - `int32 signal_zkgroup_server_secret_params_get_public_params(const void* server_secret_params, void** out_server_public_params)`
+    - `void signal_zkgroup_server_public_params_free(void* server_public_params)`
+    - `int32 signal_zkgroup_server_public_params_get_serialized_len(const void* server_public_params, size_t* out_len)`
+    - `int32 signal_zkgroup_server_public_params_serialize(const void* server_public_params, uint8_t* out_buffer, size_t buffer_len)`
+    - `int32 signal_zkgroup_server_public_params_deserialize(const uint8_t* bytes, size_t bytes_len, void** out_server_public_params)`
+
+- **AuthCredentialWithPni (ZKC, Option B)**
+    - `int32 signal_zkgroup_auth_credential_with_pni_issue_credential(const uint8_t* aci16, size_t aci_len, const uint8_t* pni16, size_t pni_len, uint64_t redemption_time_epoch_seconds, const void* server_secret_params, const uint8_t* randomness32, size_t randomness_len, void** out_response)`
+    - `void signal_zkgroup_auth_credential_with_pni_response_free(void* response)`
+    - `int32 signal_zkgroup_auth_credential_with_pni_response_receive(const void* response, const uint8_t* aci16, size_t aci_len, const uint8_t* pni16, size_t pni_len, uint64_t redemption_time_epoch_seconds, const void* server_public_params, void** out_credential)`
+    - `void signal_zkgroup_auth_credential_with_pni_free(void* credential)`
+    - `int32 signal_zkgroup_auth_credential_with_pni_present(const void* credential, const void* server_public_params, const void* group_secret_params, const uint8_t* randomness32, size_t randomness_len, void** out_presentation)`
+    - `void signal_zkgroup_auth_credential_with_pni_presentation_free(void* presentation)`
+    - `int32 signal_zkgroup_auth_credential_with_pni_presentation_verify(const void* presentation, const void* server_secret_params, const void* group_public_params, uint64_t redemption_time_epoch_seconds)`
 
 - **GroupMasterKey persistence**
     - `int32 signal_zkgroup_group_master_key_serialize(const void* master_key, uint8_t* out_buffer, size_t buffer_len)`
@@ -101,4 +155,5 @@ These functions are exported from the native library and are consumed by the C# 
     - `0`: success
     - `1`: invalid argument
     - `2`: panic caught
+    - `3`: verification failure
     - `4`: deserialization failure

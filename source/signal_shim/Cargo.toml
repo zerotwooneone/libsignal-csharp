@@ -10,9 +10,11 @@ crate-type = ["cdylib"]
 [dependencies]
 # We are now pointing to the local submodule so the AI can read the source
 libsignal-protocol = { path = "../../external/libsignal/rust/protocol" }
+libsignal-core = { path = "../../external/libsignal/rust/core" }
 zkgroup = { path = "../../external/libsignal/rust/zkgroup" }
 zeroize = "1"
 bincode = "1"
+serde = "1"
 
 [patch.crates-io]
 curve25519-dalek = { git = "https://github.com/signalapp/curve25519-dalek", tag = "signal-curve25519-4.1.3" }

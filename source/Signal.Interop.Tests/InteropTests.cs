@@ -113,6 +113,124 @@ public class InteropTests
     }
 
     [Fact]
+    public void AuthCredentialWithPni_FullLoop_IssueReceivePresentVerify_Succeeds()
+    {
+        // Arrange
+        Span<byte> serverRand = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        serverRand.Fill(1);
+        using ServerSecretParamsSafeHandle serverSecret = SignalCrypto.GenerateServerSecretParams(serverRand);
+        using ServerPublicParamsSafeHandle serverPublic = SignalCrypto.GetServerPublicParams(serverSecret);
+
+        Span<byte> groupRand = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        groupRand.Fill(2);
+        using GroupSecretParamsSafeHandle groupSecret = SignalCrypto.GenerateGroupSecretParams(groupRand);
+        using GroupPublicParamsSafeHandle groupPublic = SignalCrypto.GetGroupPublicParams(groupSecret);
+
+        Span<byte> aci = stackalloc byte[SignalCrypto.UuidLength];
+        Span<byte> pni = stackalloc byte[SignalCrypto.UuidLength];
+        aci.Fill((byte)'a');
+        pni.Fill((byte)'p');
+
+        const ulong redemptionTime = 12345UL * 86400UL;
+
+        Span<byte> issueRand = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        issueRand.Fill(3);
+
+        using AuthCredentialWithPniResponseSafeHandle response = SignalCrypto.IssueAuthCredentialWithPni(
+            aci,
+            pni,
+            redemptionTime,
+            serverSecret,
+            issueRand);
+
+        using AuthCredentialWithPniSafeHandle credential = SignalCrypto.ReceiveAuthCredentialWithPni(
+            response,
+            aci,
+            pni,
+            redemptionTime,
+            serverPublic);
+
+        Span<byte> presentRand = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        presentRand.Fill(4);
+
+        using AuthCredentialWithPniPresentationSafeHandle presentation = SignalCrypto.PresentAuthCredentialWithPni(
+            credential,
+            serverPublic,
+            groupSecret,
+            presentRand);
+
+        // Act
+        SignalCrypto.VerifyAuthCredentialWithPniPresentation(
+            presentation,
+            serverSecret,
+            groupPublic,
+            redemptionTime);
+
+        // Assert
+        Assert.True(true);
+    }
+
+    [Fact]
+    public void AuthCredentialWithPni_Verify_WithWrongRedemptionTime_ThrowsCryptographicException()
+    {
+        // Arrange
+        Span<byte> serverRand = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        serverRand.Fill(5);
+        using ServerSecretParamsSafeHandle serverSecret = SignalCrypto.GenerateServerSecretParams(serverRand);
+        using ServerPublicParamsSafeHandle serverPublic = SignalCrypto.GetServerPublicParams(serverSecret);
+
+        Span<byte> groupRand = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        groupRand.Fill(6);
+        using GroupSecretParamsSafeHandle groupSecret = SignalCrypto.GenerateGroupSecretParams(groupRand);
+        using GroupPublicParamsSafeHandle groupPublic = SignalCrypto.GetGroupPublicParams(groupSecret);
+
+        Span<byte> aci = stackalloc byte[SignalCrypto.UuidLength];
+        Span<byte> pni = stackalloc byte[SignalCrypto.UuidLength];
+        aci.Fill((byte)'a');
+        pni.Fill((byte)'p');
+
+        const ulong redemptionTime = 20000UL * 86400UL;
+        const ulong wrongRedemptionTime = 20001UL * 86400UL;
+
+        Span<byte> issueRand = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        issueRand.Fill(7);
+        using AuthCredentialWithPniResponseSafeHandle response = SignalCrypto.IssueAuthCredentialWithPni(
+            aci,
+            pni,
+            redemptionTime,
+            serverSecret,
+            issueRand);
+
+        using AuthCredentialWithPniSafeHandle credential = SignalCrypto.ReceiveAuthCredentialWithPni(
+            response,
+            aci,
+            pni,
+            redemptionTime,
+            serverPublic);
+
+        Span<byte> presentRand = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        presentRand.Fill(8);
+        using AuthCredentialWithPniPresentationSafeHandle presentation = SignalCrypto.PresentAuthCredentialWithPni(
+            credential,
+            serverPublic,
+            groupSecret,
+            presentRand);
+
+        // Act
+        try
+        {
+            SignalCrypto.VerifyAuthCredentialWithPniPresentation(presentation, serverSecret, groupPublic, wrongRedemptionTime);
+        }
+        catch (CryptographicException)
+        {
+            // Assert
+            return;
+        }
+
+        Assert.Fail("Expected CryptographicException was not thrown.");
+    }
+
+    [Fact]
     public void Generate_WithWrongLengthRandomness_ThrowsArgumentException()
     {
         // Arrange
