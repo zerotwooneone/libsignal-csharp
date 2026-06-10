@@ -26,6 +26,8 @@ const GROUP_MASTER_KEY_LEN: usize = 32;
 const UUID_LEN: usize = 16;
 const GROUP_SECRET_PARAMS_DERIVE_LABEL: &[u8] =
     b"Signal_ZKGroup_20200424_GroupMasterKey_GroupSecretParams_DeriveFromMasterKey";
+const SERVER_GROUP_ID_DERIVE_LABEL: &[u8] =
+    b"Signal_ZKGroup_20200424_GroupMasterKey_ServerGroupId_Derive";
 
 type GroupMasterKey = zkgroup::groups::GroupMasterKey;
 type GroupSecretParams = zkgroup::groups::GroupSecretParams;
@@ -37,6 +39,12 @@ type ServerPublicParams = zkgroup::ServerPublicParams;
 type AuthCredentialWithPniZkcResponse = zkgroup::api::auth::AuthCredentialWithPniZkcResponse;
 type AuthCredentialWithPniZkc = zkgroup::api::auth::AuthCredentialWithPniZkc;
 type AuthCredentialWithPniZkcPresentation = zkgroup::api::auth::AuthCredentialWithPniZkcPresentation;
+
+// Protocol types for sender key distribution
+type SenderKeyRecord = libsignal_protocol::SenderKeyRecord;
+type SenderKeyDistributionMessage = libsignal_protocol::SenderKeyDistributionMessage;
+type SenderKeyMessage = libsignal_protocol::SenderKeyMessage;
+type ProtocolAddress = libsignal_protocol::ProtocolAddress;
 
 // WARNING: This is only safe for flat, Copy types that do not own nested heap allocations.
 // If upstream changes introduce fields like Vec/String (or any Drop-requiring ownership),
@@ -119,6 +127,42 @@ pub extern "C" fn signal_zkgroup_group_secret_params_get_group_id(
         unsafe {
             std::ptr::copy_nonoverlapping(group_id.as_ptr(), out_buffer, GROUP_MASTER_KEY_LEN);
         }
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_group_secret_params_get_server_group_id(
+    secret_params: *const c_void,
+    out_buffer: *mut u8,
+    buffer_len: usize,
+) -> i32 {
+    if secret_params.is_null() || out_buffer.is_null() || buffer_len != GROUP_MASTER_KEY_LEN {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let params = unsafe { &*secret_params.cast::<GroupSecretParams>() };
+        let master_key = params.get_master_key();
+        let mut master_key_bytes = zkgroup::serialize(&master_key);
+        if master_key_bytes.len() != GROUP_MASTER_KEY_LEN {
+            master_key_bytes.zeroize();
+            return STATUS_PANIC;
+        }
+
+        let mut sho = Sho::new(SERVER_GROUP_ID_DERIVE_LABEL, &master_key_bytes);
+        let server_group_id: [u8; GROUP_MASTER_KEY_LEN] = sho.squeeze_as_array();
+
+        unsafe {
+            std::ptr::copy_nonoverlapping(server_group_id.as_ptr(), out_buffer, GROUP_MASTER_KEY_LEN);
+        }
+
+        master_key_bytes.zeroize();
         STATUS_OK
     }));
 
@@ -949,6 +993,587 @@ pub extern "C" fn signal_zkgroup_group_master_key_deserialize(
                 *out_master_key = std::ptr::null_mut();
             }
             STATUS_PANIC
+        }
+    }
+}
+
+// SenderKeyRecord functions
+#[no_mangle]
+pub extern "C" fn signal_protocol_sender_key_record_new(out_record: *mut *mut c_void) -> i32 {
+    if out_record.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    unsafe {
+        *out_record = std::ptr::null_mut();
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        // Note: Creating an empty SenderKeyRecord requires access to private libsignal APIs
+        // (new_empty() is private, and protobuf structures are also private)
+        // A proper implementation would require key material generation
+        STATUS_PANIC
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_protocol_sender_key_record_free(record: *mut c_void) {
+    free_boxed_value(record.cast::<SenderKeyRecord>());
+}
+
+#[no_mangle]
+pub extern "C" fn signal_protocol_sender_key_record_serialize_len(
+    record: *const c_void,
+    out_len: *mut usize,
+) -> i32 {
+    if record.is_null() || out_len.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let rec = unsafe { &*record.cast::<SenderKeyRecord>() };
+        let serialized = rec.serialize();
+        let serialized_bytes = match serialized {
+            Ok(v) => v,
+            Err(_) => return STATUS_PANIC,
+        };
+        unsafe {
+            *out_len = serialized_bytes.len();
+        }
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_protocol_sender_key_record_serialize(
+    record: *const c_void,
+    out_buffer: *mut u8,
+    buffer_len: usize,
+) -> i32 {
+    if record.is_null() || out_buffer.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let rec = unsafe { &*record.cast::<SenderKeyRecord>() };
+        let serialized = rec.serialize();
+        let serialized_bytes = match serialized {
+            Ok(v) => v,
+            Err(_) => return STATUS_PANIC,
+        };
+        if buffer_len < serialized_bytes.len() {
+            return STATUS_INVALID_ARGUMENT;
+        }
+
+        unsafe {
+            std::ptr::copy_nonoverlapping(serialized_bytes.as_ptr(), out_buffer, serialized_bytes.len());
+        }
+
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_protocol_sender_key_record_deserialize(
+    bytes: *const u8,
+    bytes_len: usize,
+    out_record: *mut *mut c_void,
+) -> i32 {
+    if out_record.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    unsafe {
+        *out_record = std::ptr::null_mut();
+    }
+
+    if bytes.is_null() || bytes_len == 0 {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let slice = unsafe { std::slice::from_raw_parts(bytes, bytes_len) };
+        let rec: SenderKeyRecord = match SenderKeyRecord::deserialize(slice) {
+            Ok(v) => v,
+            Err(_) => return STATUS_DESERIALIZATION_FAILURE,
+        };
+
+        let boxed = Box::new(rec);
+        unsafe {
+            *out_record = Box::into_raw(boxed).cast::<c_void>();
+        }
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => {
+            unsafe {
+                *out_record = std::ptr::null_mut();
+            }
+            STATUS_PANIC
+        }
+    }
+}
+
+// SenderAddress functions
+#[no_mangle]
+pub extern "C" fn signal_protocol_sender_address_new(
+    uuid_bytes: *const u8,
+    uuid_len: usize,
+    device_id: u32,
+    out_address: *mut *mut c_void,
+) -> i32 {
+    if out_address.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    unsafe {
+        *out_address = std::ptr::null_mut();
+    }
+
+    if uuid_bytes.is_null() || uuid_len != UUID_LEN {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let uuid_arr = unsafe {
+            let slice = std::slice::from_raw_parts(uuid_bytes, uuid_len);
+            let Ok(arr) = <[u8; UUID_LEN]>::try_from(slice) else {
+                return STATUS_INVALID_ARGUMENT;
+            };
+            arr
+        };
+
+        let _aci = Aci::from_uuid_bytes(uuid_arr);
+        let name = uuid::Uuid::from_bytes(uuid_arr).to_string();
+        let device_id_obj = match libsignal_core::DeviceId::new(device_id as u8) {
+            Ok(d) => d,
+            Err(_) => return STATUS_INVALID_ARGUMENT,
+        };
+        let address = ProtocolAddress::new(name, device_id_obj);
+        let boxed = Box::new(address);
+        unsafe {
+            *out_address = Box::into_raw(boxed).cast::<c_void>();
+        }
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_protocol_sender_address_free(address: *mut c_void) {
+    free_boxed_value(address.cast::<ProtocolAddress>());
+}
+
+// SenderKeyDistributionMessage functions
+#[no_mangle]
+pub extern "C" fn signal_protocol_sender_key_distribution_message_free(message: *mut c_void) {
+    free_boxed_value(message.cast::<SenderKeyDistributionMessage>());
+}
+
+#[no_mangle]
+pub extern "C" fn signal_protocol_sender_key_distribution_message_serialize_len(
+    message: *const c_void,
+    out_len: *mut usize,
+) -> i32 {
+    if message.is_null() || out_len.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let msg = unsafe { &*message.cast::<SenderKeyDistributionMessage>() };
+        let serialized = msg.serialized();
+        unsafe {
+            *out_len = serialized.len();
+        }
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_protocol_sender_key_distribution_message_serialize(
+    message: *const c_void,
+    out_buffer: *mut u8,
+    buffer_len: usize,
+) -> i32 {
+    if message.is_null() || out_buffer.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let msg = unsafe { &*message.cast::<SenderKeyDistributionMessage>() };
+        let serialized = msg.serialized();
+        if buffer_len < serialized.len() {
+            return STATUS_INVALID_ARGUMENT;
+        }
+
+        unsafe {
+            std::ptr::copy_nonoverlapping(serialized.as_ptr(), out_buffer, serialized.len());
+        }
+
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_protocol_sender_key_distribution_message_deserialize(
+    bytes: *const u8,
+    bytes_len: usize,
+    out_message: *mut *mut c_void,
+) -> i32 {
+    if out_message.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    unsafe {
+        *out_message = std::ptr::null_mut();
+    }
+
+    if bytes.is_null() || bytes_len == 0 {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let slice = unsafe { std::slice::from_raw_parts(bytes, bytes_len) };
+        let msg: SenderKeyDistributionMessage = match SenderKeyDistributionMessage::try_from(slice) {
+            Ok(v) => v,
+            Err(_) => return STATUS_DESERIALIZATION_FAILURE,
+        };
+
+        let boxed = Box::new(msg);
+        unsafe {
+            *out_message = Box::into_raw(boxed).cast::<c_void>();
+        }
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => {
+            unsafe {
+                *out_message = std::ptr::null_mut();
+            }
+            STATUS_PANIC
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_protocol_sender_key_distribution_message_create(
+    sender_address: *const c_void,
+    distribution_id_bytes: *const u8,
+    distribution_id_len: usize,
+    record: *const c_void,
+    out_message: *mut *mut c_void,
+) -> i32 {
+    if out_message.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    unsafe {
+        *out_message = std::ptr::null_mut();
+    }
+
+    if sender_address.is_null() || record.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+    if distribution_id_bytes.is_null() || distribution_id_len != UUID_LEN {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        // Note: The actual libsignal API for creating SenderKeyDistributionMessage
+        // requires chain keys and signing keys which are complex to generate.
+        // For now, this is a placeholder that returns an error.
+        // In a real implementation, you would need to extract chain keys from the SenderKeyRecord
+        // and generate appropriate signing keys.
+        STATUS_PANIC
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => {
+            unsafe {
+                *out_message = std::ptr::null_mut();
+            }
+            STATUS_PANIC
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_protocol_sender_key_distribution_message_process(
+    sender_address: *const c_void,
+    message: *const c_void,
+    record: *const c_void,
+) -> i32 {
+    if sender_address.is_null() || message.is_null() || record.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        // Note: Processing a distribution message requires updating the SenderKeyRecord
+        // with chain keys from the message. This is complex and requires more API knowledge.
+        // For now, this is a placeholder.
+        STATUS_PANIC
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+// SenderKeyMessage functions
+#[no_mangle]
+pub extern "C" fn signal_protocol_sender_key_message_free(message: *mut c_void) {
+    free_boxed_value(message.cast::<SenderKeyMessage>());
+}
+
+#[no_mangle]
+pub extern "C" fn signal_protocol_sender_key_message_serialize_len(
+    message: *const c_void,
+    out_len: *mut usize,
+) -> i32 {
+    if message.is_null() || out_len.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let msg = unsafe { &*message.cast::<SenderKeyMessage>() };
+        let serialized = msg.serialized();
+        unsafe {
+            *out_len = serialized.len();
+        }
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_protocol_sender_key_message_serialize(
+    message: *const c_void,
+    out_buffer: *mut u8,
+    buffer_len: usize,
+) -> i32 {
+    if message.is_null() || out_buffer.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let msg = unsafe { &*message.cast::<SenderKeyMessage>() };
+        let serialized = msg.serialized();
+        if buffer_len < serialized.len() {
+            return STATUS_INVALID_ARGUMENT;
+        }
+
+        unsafe {
+            std::ptr::copy_nonoverlapping(serialized.as_ptr(), out_buffer, serialized.len());
+        }
+
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_protocol_sender_key_message_deserialize(
+    bytes: *const u8,
+    bytes_len: usize,
+    out_message: *mut *mut c_void,
+) -> i32 {
+    if out_message.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    unsafe {
+        *out_message = std::ptr::null_mut();
+    }
+
+    if bytes.is_null() || bytes_len == 0 {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let slice = unsafe { std::slice::from_raw_parts(bytes, bytes_len) };
+        let msg: SenderKeyMessage = match SenderKeyMessage::try_from(slice) {
+            Ok(v) => v,
+            Err(_) => return STATUS_DESERIALIZATION_FAILURE,
+        };
+
+        let boxed = Box::new(msg);
+        unsafe {
+            *out_message = Box::into_raw(boxed).cast::<c_void>();
+        }
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => {
+            unsafe {
+                *out_message = std::ptr::null_mut();
+            }
+            STATUS_PANIC
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_protocol_sender_key_message_get_key_id(
+    message: *const c_void,
+    out_key_id: *mut u32,
+) -> i32 {
+    if message.is_null() || out_key_id.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let msg = unsafe { &*message.cast::<SenderKeyMessage>() };
+        // SenderKeyMessage has chain_id and iteration, not key_id
+        // We'll return chain_id as a proxy for key_id
+        let key_id = msg.chain_id();
+        unsafe {
+            *out_key_id = key_id;
+        }
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+// GroupCipher functions
+#[no_mangle]
+pub extern "C" fn signal_protocol_group_cipher_encrypt(
+    sender_address: *const c_void,
+    record: *const c_void,
+    plaintext: *const u8,
+    _plaintext_len: usize,
+    out_message: *mut *mut c_void,
+    out_new_record: *mut *mut c_void,
+) -> i32 {
+    if out_message.is_null() || out_new_record.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    unsafe {
+        *out_message = std::ptr::null_mut();
+        *out_new_record = std::ptr::null_mut();
+    }
+
+    if sender_address.is_null() || record.is_null() || plaintext.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        // Note: The actual libsignal GroupCipher API is more complex and requires
+        // proper key management and random number generation.
+        // For now, this is a placeholder that returns an error.
+        STATUS_PANIC
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => {
+            unsafe {
+                *out_message = std::ptr::null_mut();
+                *out_new_record = std::ptr::null_mut();
+            }
+            STATUS_PANIC
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_protocol_group_cipher_decrypt(
+    sender_address: *const c_void,
+    record: *const c_void,
+    message: *const c_void,
+    out_plaintext: *mut *mut u8,
+    out_plaintext_len: *mut usize,
+    out_new_record: *mut *mut c_void,
+) -> i32 {
+    if out_plaintext.is_null() || out_plaintext_len.is_null() || out_new_record.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    unsafe {
+        *out_plaintext = std::ptr::null_mut();
+        *out_plaintext_len = 0;
+        *out_new_record = std::ptr::null_mut();
+    }
+
+    if sender_address.is_null() || record.is_null() || message.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        // Note: The actual libsignal GroupCipher API is more complex and requires
+        // proper key management.
+        // For now, this is a placeholder that returns an error.
+        STATUS_PANIC
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => {
+            unsafe {
+                *out_plaintext = std::ptr::null_mut();
+                *out_plaintext_len = 0;
+                *out_new_record = std::ptr::null_mut();
+            }
+            STATUS_PANIC
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_protocol_group_cipher_free_plaintext(plaintext: *mut u8, len: usize) {
+    if !plaintext.is_null() && len > 0 {
+        unsafe {
+            let layout = std::alloc::Layout::from_size_align(len, 1).unwrap();
+            std::alloc::dealloc(plaintext, layout);
         }
     }
 }

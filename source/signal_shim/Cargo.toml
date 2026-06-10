@@ -15,6 +15,7 @@ zkgroup = { path = "../../external/libsignal/rust/zkgroup" }
 zeroize = "1"
 bincode = "1"
 serde = "1"
+uuid = "1.23.3"
 
 [patch.crates-io]
 curve25519-dalek = { git = "https://github.com/signalapp/curve25519-dalek", tag = "signal-curve25519-4.1.3" }
