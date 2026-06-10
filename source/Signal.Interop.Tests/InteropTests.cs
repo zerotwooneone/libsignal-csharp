@@ -1,7 +1,5 @@
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
-using Signal.Interop;
-using Xunit;
 
 namespace Signal.Interop.Tests;
 
@@ -412,21 +410,33 @@ public class InteropTests
 
     // Feature 2: SenderKeyRecord tests
     [Fact]
-    public void NewSenderKeyRecord_ReturnsValidHandle()
-    {
-        // Note: Creating an empty SenderKeyRecord requires access to private libsignal APIs
-        // The actual implementation requires proper key material to be useful
-        // For now, this test expects the limitation
-        Assert.Throws<System.Security.Cryptography.CryptographicException>(() =>
-            SignalCrypto.NewSenderKeyRecord());
-    }
-
-    [Fact]
     public void SenderKeyRecord_SerializeDeserialize_RoundTrips()
     {
-        // Note: Skip this test since NewSenderKeyRecord is limited
-        // In a real implementation, this would test serialization/deserialization
-        Assert.True(true);
+        // ARRANGE - Create a valid SenderKeyRecord via GroupSessionBuilder
+        using var store = new InMemorySenderKeyStore();
+        Span<byte> uuid = stackalloc byte[SignalCrypto.UuidLength];
+        uuid.Fill((byte)'a');
+        using var address = SignalCrypto.NewSenderAddress(uuid, 1);
+        Guid distributionId = Guid.NewGuid();
+
+        // Create a distribution message, which internally creates a SenderKeyRecord
+        using var distributionMessage = SignalCrypto.CreateSenderKeyDistributionMessage(
+            store.CreateVTable(), address, distributionId);
+
+        // The store now contains a serialized SenderKeyRecord
+        // Get it from the cache
+        byte[] serializedRecord = store.Cache.Values.First();
+
+        // ACT - Deserialize the record
+        using var deserializedRecord = SignalCrypto.DeserializeSenderKeyRecord(serializedRecord);
+
+        // ACT - Serialize it again (requires a buffer)
+        byte[] reserializedRecord = new byte[serializedRecord.Length];
+        int bytesWritten = SignalCrypto.SerializeSenderKeyRecord(deserializedRecord, reserializedRecord);
+
+        // ASSERT - The reserialized bytes should match the original
+        Assert.Equal(serializedRecord.Length, bytesWritten);
+        Assert.Equal(serializedRecord, reserializedRecord);
     }
 
     [Fact]
@@ -487,59 +497,169 @@ public class InteropTests
     }
 
     [Fact]
-    public void CreateSenderKeyDistributionMessage_WithValidInputs_ReturnsValidHandle()
-    {
-        // Note: This test is skipped because NewSenderKeyRecord requires access to private libsignal APIs
-        // The actual implementation requires chain key extraction and signing key generation
-        Assert.True(true);
-    }
-
-    [Fact]
     public void SenderKeyDistributionMessage_SerializeDeserialize_RoundTrips()
     {
-        // Note: Skip this test since CreateSenderKeyDistributionMessage is a stub
-        // In a real implementation, this would test serialization/deserialization
-        Assert.True(true);
-    }
+        // ARRANGE - Create a valid SenderKeyDistributionMessage via GroupSessionBuilder
+        using var store = new InMemorySenderKeyStore();
+        Span<byte> uuid = stackalloc byte[SignalCrypto.UuidLength];
+        uuid.Fill((byte)'a');
+        using var address = SignalCrypto.NewSenderAddress(uuid, 1);
+        Guid distributionId = Guid.NewGuid();
 
-    [Fact]
-    public void ProcessSenderKeyDistributionMessage_WithValidInputs_DoesNotThrow()
-    {
-        // Note: Skip this test since CreateSenderKeyDistributionMessage is a stub
-        // In a real implementation, this would test message processing
-        Assert.True(true);
+        using var distributionMessage = SignalCrypto.CreateSenderKeyDistributionMessage(
+            store.CreateVTable(), address, distributionId);
+
+        // ACT - Serialize the message
+        byte[] serializedMessage = SignalCrypto.SerializeSenderKeyDistributionMessage(distributionMessage);
+
+        // ACT - Deserialize it
+        using var deserializedMessage = SignalCrypto.DeserializeSenderKeyDistributionMessage(serializedMessage);
+
+        // ACT - Serialize it again
+        byte[] reserializedMessage = SignalCrypto.SerializeSenderKeyDistributionMessage(deserializedMessage);
+
+        // ASSERT - The reserialized bytes should match the original
+        Assert.Equal(serializedMessage, reserializedMessage);
     }
 
     // Feature 4: GroupCipher and SenderKeyMessage tests
     [Fact]
     public void GetKeyId_WithValidMessage_ReturnsKeyId()
     {
-        // Note: Skip this test since EncryptGroupMessage is a stub
-        // In a real implementation, this would test key ID extraction
-        Assert.True(true);
-    }
+        // ARRANGE - Create a valid SenderKeyMessage via GroupCipher
+        using var store = new InMemorySenderKeyStore();
+        Span<byte> uuid = stackalloc byte[SignalCrypto.UuidLength];
+        uuid.Fill((byte)'a');
+        using var address = SignalCrypto.NewSenderAddress(uuid, 1);
+        Guid distributionId = Guid.NewGuid();
 
-    [Fact]
-    public void EncryptGroupMessage_WithValidInputs_ReturnsMessageAndUpdatedRecord()
-    {
-        // Note: Skip this test since GroupCipher API is complex and currently stubbed
-        // The actual implementation requires proper key management and RNG
-        Assert.True(true);
-    }
+        // Establish session
+        using var distributionMessage = SignalCrypto.CreateSenderKeyDistributionMessage(
+            store.CreateVTable(), address, distributionId);
 
-    [Fact]
-    public void DecryptGroupMessage_WithValidInputs_ReturnsPlaintextAndUpdatedRecord()
-    {
-        // Note: Skip this test since GroupCipher API is complex and currently stubbed
-        // The actual implementation requires proper key management
-        Assert.True(true);
+        // Encrypt a message
+        byte[] plaintext = System.Text.Encoding.UTF8.GetBytes("test message");
+        using var ciphertextMessage = SignalCrypto.EncryptGroupMessage(
+            store.CreateVTable(), address, distributionId, plaintext);
+
+        // ACT - Extract the key ID
+        uint keyId = SignalCrypto.GetKeyId(ciphertextMessage);
+
+        // ASSERT - Key ID should be valid (non-zero)
+        Assert.NotEqual(0u, keyId);
     }
 
     [Fact]
     public void SenderKeyMessage_SerializeDeserialize_RoundTrips()
     {
-        // Note: Skip this test since EncryptGroupMessage is a stub
-        // In a real implementation, this would test message serialization
-        Assert.True(true);
+        // ARRANGE - Create a valid SenderKeyMessage via GroupCipher
+        using var store = new InMemorySenderKeyStore();
+        Span<byte> uuid = stackalloc byte[SignalCrypto.UuidLength];
+        uuid.Fill((byte)'a');
+        using var address = SignalCrypto.NewSenderAddress(uuid, 1);
+        Guid distributionId = Guid.NewGuid();
+
+        // Establish session
+        using var distributionMessage = SignalCrypto.CreateSenderKeyDistributionMessage(
+            store.CreateVTable(), address, distributionId);
+
+        // Encrypt a message
+        byte[] plaintext = System.Text.Encoding.UTF8.GetBytes("test message");
+        using var ciphertextMessage = SignalCrypto.EncryptGroupMessage(
+            store.CreateVTable(), address, distributionId, plaintext);
+
+        // ACT - Serialize the message
+        byte[] serializedMessage = SignalCrypto.SerializeSenderKeyMessage(ciphertextMessage);
+
+        // ACT - Deserialize it
+        using var deserializedMessage = SignalCrypto.DeserializeSenderKeyMessage(serializedMessage);
+
+        // ACT - Serialize it again
+        byte[] reserializedMessage = SignalCrypto.SerializeSenderKeyMessage(deserializedMessage);
+
+        // ASSERT - The reserialized bytes should match the original
+        Assert.Equal(serializedMessage, reserializedMessage);
+    }
+
+    // Group V2 Round-Trip Tests
+    [Fact]
+    public void ProcessSenderKeyDistributionMessage_GivenValidMessageFromAlice_BobRegistersSessionWithoutError()
+    {
+        // ARRANGE
+        using var aliceStore = new InMemorySenderKeyStore();
+        using var bobStore = new InMemorySenderKeyStore();
+        
+        // Create Alice's address
+        Span<byte> aliceUuid = stackalloc byte[SignalCrypto.UuidLength];
+        aliceUuid.Fill((byte)'a');
+        using var aliceAddress = SignalCrypto.NewSenderAddress(aliceUuid, 1);
+
+        // Generate a distribution ID
+        Guid distributionId = Guid.NewGuid();
+
+        // ACT - Alice creates the distribution message (Simulating group invite)
+        using var distributionMessage = SignalCrypto.CreateSenderKeyDistributionMessage(
+            aliceStore.CreateVTable(), 
+            aliceAddress,
+            distributionId);
+
+        // ACT - Bob processes Alice's message
+        SignalCrypto.ProcessSenderKeyDistributionMessage(
+            bobStore.CreateVTable(), 
+            aliceAddress, 
+            distributionMessage);
+
+        // ASSERT
+        // We do not reflect into the crypto state. We assert the behavioral side-effect:
+        // Bob's store MUST now contain a record for Alice's address and distribution ID.
+        // The cache key format is "senderAddressPtr:distributionId"
+        Assert.True(bobStore.Cache.Count > 0);
+    }
+
+    [Fact]
+    public void DecryptGroupMessage_GivenValidCiphertextFromAlice_BobRecoversOriginalPlaintext()
+    {
+        // ARRANGE - Fully establish the session first
+        using var aliceStore = new InMemorySenderKeyStore();
+        using var bobStore = new InMemorySenderKeyStore();
+        
+        // Create Alice's address
+        Span<byte> aliceUuid = stackalloc byte[SignalCrypto.UuidLength];
+        aliceUuid.Fill((byte)'a');
+        using var aliceAddress = SignalCrypto.NewSenderAddress(aliceUuid, 1);
+        
+        // Generate a distribution ID
+        Guid distributionId = Guid.NewGuid();
+
+        // Alice creates the distribution message
+        using var distributionMessage = SignalCrypto.CreateSenderKeyDistributionMessage(
+            aliceStore.CreateVTable(), 
+            aliceAddress,
+            distributionId);
+        
+        // Bob processes Alice's message
+        SignalCrypto.ProcessSenderKeyDistributionMessage(
+            bobStore.CreateVTable(), 
+            aliceAddress, 
+            distributionMessage);
+
+        var originalPlaintext = System.Text.Encoding.UTF8.GetBytes("The Relay is blind.");
+
+        // ACT - Alice encrypts the message
+        using var ciphertextMessage = SignalCrypto.EncryptGroupMessage(
+            aliceStore.CreateVTable(), 
+            aliceAddress,
+            distributionId,
+            originalPlaintext);
+
+        // ACT - Bob decrypts the message
+        var recoveredPlaintext = SignalCrypto.DecryptGroupMessage(
+            bobStore.CreateVTable(), 
+            aliceAddress, 
+            ciphertextMessage);
+
+        // ASSERT
+        // Black Box check: the output must perfectly match the input.
+        Assert.Equal(originalPlaintext, recoveredPlaintext);
     }
 }

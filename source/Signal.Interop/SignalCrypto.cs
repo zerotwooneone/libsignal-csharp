@@ -284,18 +284,18 @@ public static partial class SignalCrypto
         [LibraryImport(DllName, EntryPoint = "signal_protocol_sender_key_distribution_message_create")]
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
         internal static unsafe partial int signal_protocol_sender_key_distribution_message_create(
+            nint vtable,
             nint senderAddress,
             byte* distributionIdBytes,
             nuint distributionIdLen,
-            nint record,
             out nint outMessage);
 
         [LibraryImport(DllName, EntryPoint = "signal_protocol_sender_key_distribution_message_process")]
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
         internal static partial int signal_protocol_sender_key_distribution_message_process(
+            nint vtable,
             nint senderAddress,
-            nint message,
-            nint record);
+            nint message);
 
         [LibraryImport(DllName, EntryPoint = "signal_protocol_sender_key_message_free")]
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
@@ -330,22 +330,22 @@ public static partial class SignalCrypto
         [LibraryImport(DllName, EntryPoint = "signal_protocol_group_cipher_encrypt")]
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
         internal static unsafe partial int signal_protocol_group_cipher_encrypt(
+            nint vtable,
             nint senderAddress,
-            nint record,
+            byte* distributionIdBytes,
+            nuint distributionIdLen,
             byte* plaintext,
             nuint plaintextLen,
-            out nint outMessage,
-            out nint outNewRecord);
+            out nint outMessage);
 
         [LibraryImport(DllName, EntryPoint = "signal_protocol_group_cipher_decrypt")]
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
         internal static unsafe partial int signal_protocol_group_cipher_decrypt(
+            nint vtable,
             nint senderAddress,
-            nint record,
             nint message,
             out nint outPlaintext,
-            out nuint outPlaintextLen,
-            out nint outNewRecord);
+            out nuint outPlaintextLen);
 
         [LibraryImport(DllName, EntryPoint = "signal_protocol_group_cipher_free_plaintext")]
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
@@ -959,17 +959,6 @@ public static partial class SignalCrypto
     }
 
     /// <summary>
-    /// Creates a new, empty SenderKeyRecord for group messaging.
-    /// </summary>
-    /// <returns>A new SenderKeyRecord handle.</returns>
-    public static SenderKeyRecordSafeHandle NewSenderKeyRecord()
-    {
-        int status = Native.signal_protocol_sender_key_record_new(out nint record);
-        ThrowOnError(status);
-        return new SenderKeyRecordSafeHandle(record);
-    }
-
-    /// <summary>
     /// Serializes a SenderKeyRecord to a pre-allocated buffer.
     /// This prevents leaving key material in the managed heap.
     /// </summary>
@@ -1058,36 +1047,33 @@ public static partial class SignalCrypto
 
     /// <summary>
     /// Creates a SenderKeyDistributionMessage for distributing a sender key to a new group member.
+    /// Uses the VTable-based store to manage key state.
     /// </summary>
+    /// <param name="storeVTable">Pointer to the SenderKeyStoreVTable structure.</param>
     /// <param name="sender">The sender's address.</param>
     /// <param name="distributionId">The distribution ID (GUID).</param>
-    /// <param name="record">The sender's key record.</param>
     /// <returns>A SenderKeyDistributionMessage handle.</returns>
     public static SenderKeyDistributionMessageSafeHandle CreateSenderKeyDistributionMessage(
+        IntPtr storeVTable,
         SenderAddressSafeHandle sender,
-        Guid distributionId,
-        SenderKeyRecordSafeHandle record)
+        Guid distributionId)
     {
+        if (storeVTable == IntPtr.Zero)
+        {
+            throw new ArgumentException("VTable pointer cannot be zero.", nameof(storeVTable));
+        }
         ArgumentNullException.ThrowIfNull(sender);
         if (sender.IsInvalid)
         {
             throw new ArgumentException("Handle is invalid.", nameof(sender));
         }
-        ArgumentNullException.ThrowIfNull(record);
-        if (record.IsInvalid)
-        {
-            throw new ArgumentException("Handle is invalid.", nameof(record));
-        }
 
         bool addedRefSender = false;
-        bool addedRefRecord = false;
         try
         {
             sender.DangerousAddRef(ref addedRefSender);
-            record.DangerousAddRef(ref addedRefRecord);
 
             nint senderHandle = sender.DangerousGetHandle();
-            nint recordHandle = record.DangerousGetHandle();
 
             byte[] distributionIdBytes = distributionId.ToByteArray();
 
@@ -1096,10 +1082,10 @@ public static partial class SignalCrypto
                 fixed (byte* pDistId = distributionIdBytes)
                 {
                     int status = Native.signal_protocol_sender_key_distribution_message_create(
+                        storeVTable,
                         senderHandle,
                         pDistId,
                         (nuint)distributionIdBytes.Length,
-                        recordHandle,
                         out nint message);
                     ThrowOnError(status);
                     return new SenderKeyDistributionMessageSafeHandle(message);
@@ -1108,10 +1094,6 @@ public static partial class SignalCrypto
         }
         finally
         {
-            if (addedRefRecord)
-            {
-                record.DangerousRelease();
-            }
             if (addedRefSender)
             {
                 sender.DangerousRelease();
@@ -1121,15 +1103,20 @@ public static partial class SignalCrypto
 
     /// <summary>
     /// Processes an incoming SenderKeyDistributionMessage to establish a sender key.
+    /// Uses the VTable-based store to manage key state.
     /// </summary>
+    /// <param name="storeVTable">Pointer to the SenderKeyStoreVTable structure.</param>
     /// <param name="sender">The sender's address.</param>
     /// <param name="message">The distribution message.</param>
-    /// <param name="record">The local sender key record to update.</param>
     public static void ProcessSenderKeyDistributionMessage(
+        IntPtr storeVTable,
         SenderAddressSafeHandle sender,
-        SenderKeyDistributionMessageSafeHandle message,
-        SenderKeyRecordSafeHandle record)
+        SenderKeyDistributionMessageSafeHandle message)
     {
+        if (storeVTable == IntPtr.Zero)
+        {
+            throw new ArgumentException("VTable pointer cannot be zero.", nameof(storeVTable));
+        }
         ArgumentNullException.ThrowIfNull(sender);
         if (sender.IsInvalid)
         {
@@ -1140,33 +1127,22 @@ public static partial class SignalCrypto
         {
             throw new ArgumentException("Handle is invalid.", nameof(message));
         }
-        ArgumentNullException.ThrowIfNull(record);
-        if (record.IsInvalid)
-        {
-            throw new ArgumentException("Handle is invalid.", nameof(record));
-        }
 
         bool addedRefSender = false;
         bool addedRefMessage = false;
-        bool addedRefRecord = false;
         try
         {
             sender.DangerousAddRef(ref addedRefSender);
             message.DangerousAddRef(ref addedRefMessage);
-            record.DangerousAddRef(ref addedRefRecord);
 
             int status = Native.signal_protocol_sender_key_distribution_message_process(
+                storeVTable,
                 sender.DangerousGetHandle(),
-                message.DangerousGetHandle(),
-                record.DangerousGetHandle());
+                message.DangerousGetHandle());
             ThrowOnError(status);
         }
         finally
         {
-            if (addedRefRecord)
-            {
-                record.DangerousRelease();
-            }
             if (addedRefMessage)
             {
                 message.DangerousRelease();
@@ -1277,60 +1253,57 @@ public static partial class SignalCrypto
     }
 
     /// <summary>
-    /// Encrypts a group message using the sender's key record.
+    /// Encrypts a group message using the VTable-based store.
     /// </summary>
+    /// <param name="storeVTable">Pointer to the SenderKeyStoreVTable structure.</param>
     /// <param name="sender">The sender's address.</param>
-    /// <param name="record">The sender's key record (will be updated after encryption).</param>
+    /// <param name="distributionId">The distribution ID (GUID).</param>
     /// <param name="plaintext">The plaintext message.</param>
-    /// <returns>A tuple containing the encrypted message and the updated key record.</returns>
-    public static (SenderKeyMessageSafeHandle Message, SenderKeyRecordSafeHandle NewRecord) EncryptGroupMessage(
+    /// <returns>The encrypted message.</returns>
+    public static SenderKeyMessageSafeHandle EncryptGroupMessage(
+        IntPtr storeVTable,
         SenderAddressSafeHandle sender,
-        SenderKeyRecordSafeHandle record,
+        Guid distributionId,
         ReadOnlySpan<byte> plaintext)
     {
+        if (storeVTable == IntPtr.Zero)
+        {
+            throw new ArgumentException("VTable pointer cannot be zero.", nameof(storeVTable));
+        }
         ArgumentNullException.ThrowIfNull(sender);
         if (sender.IsInvalid)
         {
             throw new ArgumentException("Handle is invalid.", nameof(sender));
         }
-        ArgumentNullException.ThrowIfNull(record);
-        if (record.IsInvalid)
-        {
-            throw new ArgumentException("Handle is invalid.", nameof(record));
-        }
 
         bool addedRefSender = false;
-        bool addedRefRecord = false;
         try
         {
             sender.DangerousAddRef(ref addedRefSender);
-            record.DangerousAddRef(ref addedRefRecord);
 
             nint senderHandle = sender.DangerousGetHandle();
-            nint recordHandle = record.DangerousGetHandle();
+            byte[] distributionIdBytes = distributionId.ToByteArray();
 
             unsafe
             {
+                fixed (byte* pDistId = distributionIdBytes)
                 fixed (byte* pPlaintext = plaintext)
                 {
                     int status = Native.signal_protocol_group_cipher_encrypt(
+                        storeVTable,
                         senderHandle,
-                        recordHandle,
+                        pDistId,
+                        (nuint)distributionIdBytes.Length,
                         pPlaintext,
                         (nuint)plaintext.Length,
-                        out nint message,
-                        out nint newRecord);
+                        out nint message);
                     ThrowOnError(status);
-                    return (new SenderKeyMessageSafeHandle(message), new SenderKeyRecordSafeHandle(newRecord));
+                    return new SenderKeyMessageSafeHandle(message);
                 }
             }
         }
         finally
         {
-            if (addedRefRecord)
-            {
-                record.DangerousRelease();
-            }
             if (addedRefSender)
             {
                 sender.DangerousRelease();
@@ -1339,26 +1312,25 @@ public static partial class SignalCrypto
     }
 
     /// <summary>
-    /// Decrypts a group message using the sender's key record.
+    /// Decrypts a group message using the VTable-based store.
     /// </summary>
+    /// <param name="storeVTable">Pointer to the SenderKeyStoreVTable structure.</param>
     /// <param name="sender">The sender's address.</param>
-    /// <param name="record">The sender's key record (will be updated after decryption).</param>
     /// <param name="message">The encrypted message.</param>
-    /// <returns>A tuple containing the decrypted plaintext and the updated key record.</returns>
-    public static (byte[] Plaintext, SenderKeyRecordSafeHandle NewRecord) DecryptGroupMessage(
+    /// <returns>The decrypted plaintext.</returns>
+    public static byte[] DecryptGroupMessage(
+        IntPtr storeVTable,
         SenderAddressSafeHandle sender,
-        SenderKeyRecordSafeHandle record,
         SenderKeyMessageSafeHandle message)
     {
+        if (storeVTable == IntPtr.Zero)
+        {
+            throw new ArgumentException("VTable pointer cannot be zero.", nameof(storeVTable));
+        }
         ArgumentNullException.ThrowIfNull(sender);
         if (sender.IsInvalid)
         {
             throw new ArgumentException("Handle is invalid.", nameof(sender));
-        }
-        ArgumentNullException.ThrowIfNull(record);
-        if (record.IsInvalid)
-        {
-            throw new ArgumentException("Handle is invalid.", nameof(record));
         }
         ArgumentNullException.ThrowIfNull(message);
         if (message.IsInvalid)
@@ -1367,27 +1339,23 @@ public static partial class SignalCrypto
         }
 
         bool addedRefSender = false;
-        bool addedRefRecord = false;
         bool addedRefMessage = false;
         try
         {
             sender.DangerousAddRef(ref addedRefSender);
-            record.DangerousAddRef(ref addedRefRecord);
             message.DangerousAddRef(ref addedRefMessage);
 
             nint senderHandle = sender.DangerousGetHandle();
-            nint recordHandle = record.DangerousGetHandle();
             nint messageHandle = message.DangerousGetHandle();
 
             unsafe
             {
                 int status = Native.signal_protocol_group_cipher_decrypt(
+                    storeVTable,
                     senderHandle,
-                    recordHandle,
                     messageHandle,
                     out nint plaintextPtr,
-                    out nuint plaintextLen,
-                    out nint newRecord);
+                    out nuint plaintextLen);
                 ThrowOnError(status);
 
                 // Copy plaintext to managed array
@@ -1400,7 +1368,7 @@ public static partial class SignalCrypto
                 // Free the native plaintext buffer
                 Native.signal_protocol_group_cipher_free_plaintext(plaintextPtr, plaintextLen);
 
-                return (plaintext, new SenderKeyRecordSafeHandle(newRecord));
+                return plaintext;
             }
         }
         finally
@@ -1408,10 +1376,6 @@ public static partial class SignalCrypto
             if (addedRefMessage)
             {
                 message.DangerousRelease();
-            }
-            if (addedRefRecord)
-            {
-                record.DangerousRelease();
             }
             if (addedRefSender)
             {

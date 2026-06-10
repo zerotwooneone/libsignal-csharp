@@ -67,6 +67,47 @@ Primary entrypoint:
         - Throws `ArgumentException` if `bytes32.Length != 32`.
         - Throws `CryptographicException` if native deserialization fails.
 
+    - **`public static void GetServerGroupId(GroupSecretParamsSafeHandle handle, Span<byte> outBuffer)`**
+        - Writes exactly 32 bytes of the server group identifier for Blind Relay routing.
+        - Allocation-free.
+        - Throws `ArgumentException` if the destination buffer length is not exactly 32.
+
+    - **`public static int SerializeSenderKeyRecord(SenderKeyRecordSafeHandle record, Span<byte> buffer)`**
+        - Serializes a SenderKeyRecord to a pre-allocated buffer.
+        - **Security**: This prevents leaving key material in the managed heap.
+        - Caller must provide a buffer of sufficient size (call `signal_protocol_sender_key_record_serialize_len` in native code to determine size).
+
+    - **`public static SenderKeyRecordSafeHandle DeserializeSenderKeyRecord(ReadOnlySpan<byte> bytes)`**
+        - Reconstructs a SenderKeyRecord from serialized bytes.
+        - Throws `ArgumentException` if `bytes.Length == 0`.
+        - Throws `CryptographicException` if native deserialization fails.
+
+    - **`public static SenderAddressSafeHandle NewSenderAddress(ReadOnlySpan<byte> uuidBytes, uint deviceId)`**
+        - Creates a new SenderAddress from a UUID and device ID.
+        - `uuidBytes` must be exactly 16 bytes.
+        - `deviceId` must be in the range 1-127 (Signal protocol constraint).
+
+    - **`public static SenderKeyDistributionMessageSafeHandle CreateSenderKeyDistributionMessage(IntPtr storeVTable, SenderAddressSafeHandle sender, Guid distributionId)`**
+        - Creates a SenderKeyDistributionMessage for distributing a sender key to a new group member.
+        - Uses the VTable-based SenderKeyStore for key state management.
+
+    - **`public static void ProcessSenderKeyDistributionMessage(IntPtr storeVTable, SenderAddressSafeHandle sender, SenderKeyDistributionMessageSafeHandle message)`**
+        - Processes a received SenderKeyDistributionMessage to update the local SenderKeyRecord.
+        - Uses the VTable-based SenderKeyStore for key state management.
+
+    - **`public static uint GetKeyId(SenderKeyMessageSafeHandle message)`**
+        - Extracts the key ID (chain ID) from a SenderKeyMessage.
+
+    - **`public static SenderKeyMessageSafeHandle EncryptGroupMessage(IntPtr storeVTable, SenderAddressSafeHandle sender, Guid distributionId, ReadOnlySpan<byte> plaintext)`**
+        - Encrypts a plaintext message for a group using the SenderKeyRecord.
+        - Returns the encrypted message.
+        - Uses the VTable-based SenderKeyStore for key state management.
+
+    - **`public static byte[] DecryptGroupMessage(IntPtr storeVTable, SenderAddressSafeHandle sender, SenderKeyMessageSafeHandle message)`**
+        - Decrypts a group message using the SenderKeyRecord.
+        - Returns the plaintext.
+        - Uses the VTable-based SenderKeyStore for key state management.
+
 SafeHandle types (opaque native ownership):
 
 - **`public sealed class GroupSecretParamsSafeHandle : SafeHandle`**
@@ -77,6 +118,10 @@ SafeHandle types (opaque native ownership):
 - **`public sealed class AuthCredentialWithPniResponseSafeHandle : SafeHandle`**
 - **`public sealed class AuthCredentialWithPniSafeHandle : SafeHandle`**
 - **`public sealed class AuthCredentialWithPniPresentationSafeHandle : SafeHandle`**
+- **`public sealed class SenderKeyRecordSafeHandle : SafeHandle`**
+- **`public sealed class SenderAddressSafeHandle : SafeHandle`**
+- **`public sealed class SenderKeyDistributionMessageSafeHandle : SafeHandle`**
+- **`public sealed class SenderKeyMessageSafeHandle : SafeHandle`**
 
 ### Usage notes (C#)
 
@@ -94,6 +139,10 @@ SafeHandle types (opaque native ownership):
 - **Threading**
     - The wrapper uses `DangerousAddRef`/`DangerousRelease` when passing handles to native code to prevent races with finalization.
     - Treat handle instances as normal reference types; avoid disposing while concurrently using them.
+
+- **VTable Delegate Lifetime**
+    - The unmanaged function pointers (delegates) backing the `storeVTable` IntPtr MUST be kept alive by the managed application (e.g., stored in a class-level field) for the entire duration of the native call to prevent the Garbage Collector from cleaning them up before the native callback executes.
+    - Failure to keep delegates alive will result in a fatal Execution Engine crash (Access Violation) when the Rust FFI attempts to invoke the callback.
 
 ## Rust C-ABI exports (`signal_shim`)
 
@@ -113,6 +162,9 @@ These functions are exported from the native library and are consumed by the C# 
     - `int32 signal_zkgroup_group_secret_params_derive_from_master_key(const void* master_key, void** out_secret_params)`
     - `int32 signal_zkgroup_group_secret_params_get_group_id(const void* secret_params, uint8_t* out_buffer, size_t buffer_len)`
         - Requires `buffer_len == 32`.
+    - `int32 signal_zkgroup_group_secret_params_get_server_group_id(const void* secret_params, uint8_t* out_buffer, size_t buffer_len)`
+        - Requires `buffer_len == 32`.
+        - Returns the server group identifier for Blind Relay routing.
     - `int32 signal_zkgroup_group_secret_params_get_blob_key(const void* secret_params, uint8_t* out_buffer, size_t buffer_len)`
         - Requires `buffer_len == 32`.
     - `int32 signal_zkgroup_group_secret_params_get_public_params(const void* secret_params, void** out_public_params)`
@@ -144,6 +196,43 @@ These functions are exported from the native library and are consumed by the C# 
         - Requires `buffer_len == 32`.
     - `int32 signal_zkgroup_group_master_key_deserialize(const uint8_t* bytes, size_t bytes_len, void** out_master_key)`
         - Requires `bytes_len == 32`.
+
+- **SenderKeyRecord (Group Messaging)**
+    - `void signal_protocol_sender_key_record_free(void* record)`
+    - `int32 signal_protocol_sender_key_record_serialize_len(const void* record, size_t* out_len)`
+    - `int32 signal_protocol_sender_key_record_serialize(const void* record, uint8_t* out_buffer, size_t buffer_len)`
+    - `int32 signal_protocol_sender_key_record_deserialize(const uint8_t* bytes, size_t bytes_len, void** out_record)`
+
+- **SenderAddress (Group Messaging)**
+    - `int32 signal_protocol_sender_address_new(const uint8_t* uuid_bytes, size_t uuid_len, uint32_t device_id, void** out_address)`
+        - `uuid_len` must be exactly 16.
+        - `device_id` must be in the range 1-127.
+    - `void signal_protocol_sender_address_free(void* address)`
+
+- **SenderKeyDistributionMessage (Group Messaging)**
+    - `void signal_protocol_sender_key_distribution_message_free(void* message)`
+    - `int32 signal_protocol_sender_key_distribution_message_serialize_len(const void* message, size_t* out_len)`
+    - `int32 signal_protocol_sender_key_distribution_message_serialize(const void* message, uint8_t* out_buffer, size_t buffer_len)`
+    - `int32 signal_protocol_sender_key_distribution_message_deserialize(const uint8_t* bytes, size_t bytes_len, void** out_message)`
+    - `int32 signal_protocol_sender_key_distribution_message_create(const void* vtable, const void* sender_address, const uint8_t* distribution_id_bytes, size_t distribution_id_len, void** out_message)`
+        - Creates a distribution message using GroupSessionBuilder with VTable-based SenderKeyStore.
+    - `int32 signal_protocol_sender_key_distribution_message_process(const void* vtable, const void* sender_address, const void* message)`
+        - Processes a distribution message using VTable-based SenderKeyStore.
+
+- **SenderKeyMessage (Group Messaging)**
+    - `void signal_protocol_sender_key_message_free(void* message)`
+    - `int32 signal_protocol_sender_key_message_serialize_len(const void* message, size_t* out_len)`
+    - `int32 signal_protocol_sender_key_message_serialize(const void* message, uint8_t* out_buffer, size_t buffer_len)`
+    - `int32 signal_protocol_sender_key_message_deserialize(const uint8_t* bytes, size_t bytes_len, void** out_message)`
+    - `int32 signal_protocol_sender_key_message_get_key_id(const void* message, uint32_t* out_key_id)`
+        - Returns the chain ID as a proxy for key ID.
+
+- **GroupCipher (Group Messaging)**
+    - `int32 signal_protocol_group_cipher_encrypt(const void* vtable, const void* sender_address, const uint8_t* distribution_id_bytes, size_t distribution_id_len, const uint8_t* plaintext, size_t plaintext_len, void** out_message)`
+        - Encrypts a message using GroupCipher with VTable-based SenderKeyStore.
+    - `int32 signal_protocol_group_cipher_decrypt(const void* vtable, const void* sender_address, const void* message, uint8_t** out_plaintext, size_t* out_plaintext_len)`
+        - Decrypts a message using GroupCipher with VTable-based SenderKeyStore.
+    - `void signal_protocol_group_cipher_free_plaintext(uint8_t* plaintext, size_t len)`
 
 ### Usage notes (C-ABI)
 

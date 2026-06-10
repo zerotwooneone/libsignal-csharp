@@ -46,6 +46,122 @@ type SenderKeyDistributionMessage = libsignal_protocol::SenderKeyDistributionMes
 type SenderKeyMessage = libsignal_protocol::SenderKeyMessage;
 type ProtocolAddress = libsignal_protocol::ProtocolAddress;
 
+// VTable for SenderKeyStore callbacks from C#
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct SenderKeyStoreVTable {
+    // Returns 0 on success, 1 on not found, negative on error.
+    // 'out_record' is a double-pointer where C# will write the serialized SenderKeyRecord.
+    // 'out_len' is where C# will write the length of the serialized record.
+    pub load_sender_key: extern "C" fn(
+        sender_address: *const c_void,
+        distribution_id_bytes: *const u8,
+        distribution_id_len: usize,
+        out_record: *mut *mut c_void,
+        out_len: *mut usize,
+    ) -> i32,
+
+    // Returns 0 on success.
+    // Passes the newly ratcheted/created record bytes back to C# to cache.
+    pub store_sender_key: extern "C" fn(
+        sender_address: *const c_void,
+        distribution_id_bytes: *const u8,
+        distribution_id_len: usize,
+        record_bytes: *const u8,
+        record_len: usize,
+    ) -> i32,
+}
+
+// FFI wrapper for SenderKeyStore that calls back to C# via VTable
+struct FfiSenderKeyStore {
+    vtable: SenderKeyStoreVTable,
+}
+
+impl FfiSenderKeyStore {
+    fn new(vtable: SenderKeyStoreVTable) -> Self {
+        Self { vtable }
+    }
+}
+
+// Implement the async SenderKeyStore trait for FfiSenderKeyStore
+#[async_trait::async_trait(?Send)]
+impl libsignal_protocol::SenderKeyStore for FfiSenderKeyStore {
+    async fn store_sender_key(
+        &mut self,
+        sender: &ProtocolAddress,
+        distribution_id: uuid::Uuid,
+        record: &SenderKeyRecord,
+    ) -> Result<(), libsignal_protocol::SignalProtocolError> {
+        // Serialize the record
+        let serialized = record.serialize()
+            .map_err(|_| libsignal_protocol::SignalProtocolError::InvalidState("Failed to serialize record", "serialize error".to_string()))?;
+
+        // Convert distribution_id to bytes
+        let distribution_id_bytes = distribution_id.as_bytes();
+
+        // Call the C# callback
+        let result = (self.vtable.store_sender_key)(
+            sender as *const ProtocolAddress as *const c_void,
+            distribution_id_bytes.as_ptr(),
+            distribution_id_bytes.len(),
+            serialized.as_ptr(),
+            serialized.len(),
+        );
+
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(libsignal_protocol::SignalProtocolError::InvalidState("C# store callback failed", "callback error".to_string()))
+        }
+    }
+
+    async fn load_sender_key(
+        &mut self,
+        sender: &ProtocolAddress,
+        distribution_id: uuid::Uuid,
+    ) -> Result<Option<SenderKeyRecord>, libsignal_protocol::SignalProtocolError> {
+        // Convert distribution_id to bytes
+        let distribution_id_bytes = distribution_id.as_bytes();
+
+        // Call the C# callback to get the serialized record
+        let mut record_ptr: *mut c_void = std::ptr::null_mut();
+        let mut record_len: usize = 0;
+        let result = (self.vtable.load_sender_key)(
+            sender as *const ProtocolAddress as *const c_void,
+            distribution_id_bytes.as_ptr(),
+            distribution_id_bytes.len(),
+            &mut record_ptr,
+            &mut record_len,
+        );
+
+        if result == 1 {
+            // Not found
+            return Ok(None);
+        }
+
+        if result != 0 {
+            return Err(libsignal_protocol::SignalProtocolError::InvalidState("C# load callback failed", "callback error".to_string()));
+        }
+
+        // Deserialize the record from the bytes returned by C#
+        if record_ptr.is_null() || record_len == 0 {
+            return Err(libsignal_protocol::SignalProtocolError::InvalidState("C# returned null record", "null record".to_string()));
+        }
+
+        let record_bytes = unsafe { std::slice::from_raw_parts(record_ptr as *const u8, record_len) };
+        let record = SenderKeyRecord::deserialize(record_bytes)
+            .map_err(|_| libsignal_protocol::SignalProtocolError::InvalidState("Failed to deserialize record", "deserialize error".to_string()))?;
+
+        // Free the memory allocated by C#
+        unsafe {
+            let layout = std::alloc::Layout::from_size_align(record_len, 1).unwrap();
+            std::alloc::dealloc(record_ptr as *mut u8, layout);
+        }
+
+        Ok(Some(record))
+    }
+}
+
 // WARNING: This is only safe for flat, Copy types that do not own nested heap allocations.
 // If upstream changes introduce fields like Vec/String (or any Drop-requiring ownership),
 // wiping the raw bytes before drop would corrupt internal pointers and can cause leaks.
@@ -998,28 +1114,10 @@ pub extern "C" fn signal_zkgroup_group_master_key_deserialize(
 }
 
 // SenderKeyRecord functions
-#[no_mangle]
-pub extern "C" fn signal_protocol_sender_key_record_new(out_record: *mut *mut c_void) -> i32 {
-    if out_record.is_null() {
-        return STATUS_INVALID_ARGUMENT;
-    }
-
-    unsafe {
-        *out_record = std::ptr::null_mut();
-    }
-
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        // Note: Creating an empty SenderKeyRecord requires access to private libsignal APIs
-        // (new_empty() is private, and protobuf structures are also private)
-        // A proper implementation would require key material generation
-        STATUS_PANIC
-    }));
-
-    match result {
-        Ok(code) => code,
-        Err(_) => STATUS_PANIC,
-    }
-}
+// Note: signal_protocol_sender_key_record_new is intentionally removed.
+// Creating an empty SenderKeyRecord requires access to private libsignal APIs.
+// Use GroupSessionBuilder (signal_protocol_sender_key_distribution_message_create)
+// to create valid SenderKeyRecords instead.
 
 #[no_mangle]
 pub extern "C" fn signal_protocol_sender_key_record_free(record: *mut c_void) {
@@ -1289,22 +1387,20 @@ pub extern "C" fn signal_protocol_sender_key_distribution_message_deserialize(
 }
 
 #[no_mangle]
-pub extern "C" fn signal_protocol_sender_key_distribution_message_create(
+pub unsafe extern "C" fn signal_protocol_sender_key_distribution_message_create(
+    vtable: *const SenderKeyStoreVTable,
     sender_address: *const c_void,
     distribution_id_bytes: *const u8,
     distribution_id_len: usize,
-    record: *const c_void,
     out_message: *mut *mut c_void,
 ) -> i32 {
     if out_message.is_null() {
         return STATUS_INVALID_ARGUMENT;
     }
 
-    unsafe {
-        *out_message = std::ptr::null_mut();
-    }
+    *out_message = std::ptr::null_mut();
 
-    if sender_address.is_null() || record.is_null() {
+    if vtable.is_null() || sender_address.is_null() {
         return STATUS_INVALID_ARGUMENT;
     }
     if distribution_id_bytes.is_null() || distribution_id_len != UUID_LEN {
@@ -1312,40 +1408,77 @@ pub extern "C" fn signal_protocol_sender_key_distribution_message_create(
     }
 
     let result = catch_unwind(AssertUnwindSafe(|| {
-        // Note: The actual libsignal API for creating SenderKeyDistributionMessage
-        // requires chain keys and signing keys which are complex to generate.
-        // For now, this is a placeholder that returns an error.
-        // In a real implementation, you would need to extract chain keys from the SenderKeyRecord
-        // and generate appropriate signing keys.
-        STATUS_PANIC
+        use futures::executor::block_on;
+        use rand::rngs::ThreadRng;
+
+        // Create the FFI store wrapper
+        let mut store = FfiSenderKeyStore::new(*vtable);
+
+        // Get the ProtocolAddress
+        let address = &*(sender_address as *const ProtocolAddress);
+
+        // Parse the distribution_id UUID
+        let distribution_id_bytes_slice = std::slice::from_raw_parts(distribution_id_bytes, distribution_id_len);
+        let distribution_id = uuid::Uuid::from_bytes(
+            distribution_id_bytes_slice.try_into().unwrap()
+        );
+
+        // Create a CSPRng for key generation
+        let mut csprng = ThreadRng::default();
+
+        // Block on the async call to create the distribution message
+        match block_on(libsignal_protocol::create_sender_key_distribution_message(
+            address,
+            distribution_id,
+            &mut store,
+            &mut csprng,
+        )) {
+            Ok(msg) => {
+                *out_message = Box::into_raw(Box::new(msg)) as *mut c_void;
+                STATUS_OK
+            },
+            Err(_) => STATUS_VERIFICATION_FAILURE,
+        }
     }));
 
     match result {
         Ok(code) => code,
         Err(_) => {
-            unsafe {
-                *out_message = std::ptr::null_mut();
-            }
+            *out_message = std::ptr::null_mut();
             STATUS_PANIC
         }
     }
 }
 
 #[no_mangle]
-pub extern "C" fn signal_protocol_sender_key_distribution_message_process(
+pub unsafe extern "C" fn signal_protocol_sender_key_distribution_message_process(
+    vtable: *const SenderKeyStoreVTable,
     sender_address: *const c_void,
     message: *const c_void,
-    record: *const c_void,
 ) -> i32 {
-    if sender_address.is_null() || message.is_null() || record.is_null() {
+    if vtable.is_null() || sender_address.is_null() || message.is_null() {
         return STATUS_INVALID_ARGUMENT;
     }
 
     let result = catch_unwind(AssertUnwindSafe(|| {
-        // Note: Processing a distribution message requires updating the SenderKeyRecord
-        // with chain keys from the message. This is complex and requires more API knowledge.
-        // For now, this is a placeholder.
-        STATUS_PANIC
+        use futures::executor::block_on;
+
+        // Create the FFI store wrapper
+        let mut store = FfiSenderKeyStore::new(*vtable);
+
+        // Get the ProtocolAddress and message
+        let address = &*(sender_address as *const ProtocolAddress);
+        let msg = &*(message as *const SenderKeyDistributionMessage);
+
+        // Block on the async call to process the distribution message
+        match block_on(libsignal_protocol::process_sender_key_distribution_message(
+            address,
+            msg,
+            &mut store,
+        )) {
+            Ok(()) => STATUS_OK,
+            Err(_) => STATUS_VERIFICATION_FAILURE,
+        }
     }));
 
     match result {
@@ -1485,84 +1618,137 @@ pub extern "C" fn signal_protocol_sender_key_message_get_key_id(
 
 // GroupCipher functions
 #[no_mangle]
-pub extern "C" fn signal_protocol_group_cipher_encrypt(
+pub unsafe extern "C" fn signal_protocol_group_cipher_encrypt(
+    vtable: *const SenderKeyStoreVTable,
     sender_address: *const c_void,
-    record: *const c_void,
+    distribution_id_bytes: *const u8,
+    distribution_id_len: usize,
     plaintext: *const u8,
-    _plaintext_len: usize,
+    plaintext_len: usize,
     out_message: *mut *mut c_void,
-    out_new_record: *mut *mut c_void,
 ) -> i32 {
-    if out_message.is_null() || out_new_record.is_null() {
+    if out_message.is_null() {
         return STATUS_INVALID_ARGUMENT;
     }
 
-    unsafe {
-        *out_message = std::ptr::null_mut();
-        *out_new_record = std::ptr::null_mut();
-    }
+    *out_message = std::ptr::null_mut();
 
-    if sender_address.is_null() || record.is_null() || plaintext.is_null() {
+    if vtable.is_null() || sender_address.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+    if distribution_id_bytes.is_null() || distribution_id_len != UUID_LEN {
+        return STATUS_INVALID_ARGUMENT;
+    }
+    if plaintext.is_null() || plaintext_len == 0 {
         return STATUS_INVALID_ARGUMENT;
     }
 
     let result = catch_unwind(AssertUnwindSafe(|| {
-        // Note: The actual libsignal GroupCipher API is more complex and requires
-        // proper key management and random number generation.
-        // For now, this is a placeholder that returns an error.
-        STATUS_PANIC
+        use futures::executor::block_on;
+        use rand::rngs::ThreadRng;
+
+        // Create the FFI store wrapper
+        let mut store = FfiSenderKeyStore::new(*vtable);
+
+        // Get the ProtocolAddress
+        let address = &*(sender_address as *const ProtocolAddress);
+
+        // Parse the distribution_id UUID
+        let distribution_id_bytes_slice = std::slice::from_raw_parts(distribution_id_bytes, distribution_id_len);
+        let distribution_id = uuid::Uuid::from_bytes(
+            distribution_id_bytes_slice.try_into().unwrap()
+        );
+
+        // Get the plaintext
+        let plaintext_slice = std::slice::from_raw_parts(plaintext, plaintext_len);
+
+        // Create a CSPRng for key generation
+        let mut csprng = ThreadRng::default();
+
+        // Block on the async call to encrypt
+        match block_on(libsignal_protocol::group_encrypt(
+            &mut store,
+            address,
+            distribution_id,
+            plaintext_slice,
+            &mut csprng,
+        )) {
+            Ok(msg) => {
+                *out_message = Box::into_raw(Box::new(msg)) as *mut c_void;
+                STATUS_OK
+            },
+            Err(_) => STATUS_VERIFICATION_FAILURE,
+        }
     }));
 
     match result {
         Ok(code) => code,
         Err(_) => {
-            unsafe {
-                *out_message = std::ptr::null_mut();
-                *out_new_record = std::ptr::null_mut();
-            }
+            *out_message = std::ptr::null_mut();
             STATUS_PANIC
         }
     }
 }
 
 #[no_mangle]
-pub extern "C" fn signal_protocol_group_cipher_decrypt(
+pub unsafe extern "C" fn signal_protocol_group_cipher_decrypt(
+    vtable: *const SenderKeyStoreVTable,
     sender_address: *const c_void,
-    record: *const c_void,
     message: *const c_void,
     out_plaintext: *mut *mut u8,
     out_plaintext_len: *mut usize,
-    out_new_record: *mut *mut c_void,
 ) -> i32 {
-    if out_plaintext.is_null() || out_plaintext_len.is_null() || out_new_record.is_null() {
+    if out_plaintext.is_null() || out_plaintext_len.is_null() {
         return STATUS_INVALID_ARGUMENT;
     }
 
-    unsafe {
-        *out_plaintext = std::ptr::null_mut();
-        *out_plaintext_len = 0;
-        *out_new_record = std::ptr::null_mut();
-    }
+    *out_plaintext = std::ptr::null_mut();
+    *out_plaintext_len = 0;
 
-    if sender_address.is_null() || record.is_null() || message.is_null() {
+    if vtable.is_null() || sender_address.is_null() || message.is_null() {
         return STATUS_INVALID_ARGUMENT;
     }
 
     let result = catch_unwind(AssertUnwindSafe(|| {
-        // Note: The actual libsignal GroupCipher API is more complex and requires
-        // proper key management.
-        // For now, this is a placeholder that returns an error.
-        STATUS_PANIC
+        use futures::executor::block_on;
+
+        // Create the FFI store wrapper
+        let mut store = FfiSenderKeyStore::new(*vtable);
+
+        // Get the ProtocolAddress and message
+        let address = &*(sender_address as *const ProtocolAddress);
+        let msg = &*(message as *const SenderKeyMessage);
+
+        // Serialize the message to get bytes for group_decrypt
+        let msg_bytes = msg.serialized();
+
+        // Block on the async call to decrypt
+        match block_on(libsignal_protocol::group_decrypt(
+            &msg_bytes,
+            &mut store,
+            address,
+        )) {
+            Ok(plaintext) => {
+                // Allocate memory for the plaintext and copy it
+                let layout = std::alloc::Layout::from_size_align(plaintext.len(), 1).unwrap();
+                let plaintext_ptr = std::alloc::alloc(layout) as *mut u8;
+                if plaintext_ptr.is_null() {
+                    return STATUS_PANIC;
+                }
+                std::ptr::copy_nonoverlapping(plaintext.as_ptr(), plaintext_ptr, plaintext.len());
+                *out_plaintext = plaintext_ptr;
+                *out_plaintext_len = plaintext.len();
+                STATUS_OK
+            },
+            Err(_) => STATUS_VERIFICATION_FAILURE,
+        }
     }));
 
     match result {
         Ok(code) => code,
         Err(_) => {
-            unsafe {
-                *out_plaintext = std::ptr::null_mut();
-                *out_plaintext_len = 0;
-                *out_new_record = std::ptr::null_mut();
-            }
+            *out_plaintext = std::ptr::null_mut();
+            *out_plaintext_len = 0;
             STATUS_PANIC
         }
     }
