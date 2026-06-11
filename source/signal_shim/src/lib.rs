@@ -6,6 +6,8 @@ use zeroize::Zeroize;
 use zkgroup::common::sho::Sho;
 use zkgroup::common::simple_types::Timestamp;
 use libsignal_core::{Aci, Pni};
+use libsignal_core::curve::{KeyPair, PrivateKey, PublicKey};
+use rand::rng;
 
 /// `#[no_mangle]` is critical. It turns off Rust's name mangling so the compiled 
 /// function retains the exact name "signal_shim_test_connection" in the exported DLL.
@@ -24,6 +26,9 @@ const STATUS_DESERIALIZATION_FAILURE: i32 = 4;
 
 const GROUP_MASTER_KEY_LEN: usize = 32;
 const UUID_LEN: usize = 16;
+const ED25519_PRIVATE_KEY_LEN: usize = 32;
+const ED25519_PUBLIC_KEY_LEN: usize = 32;
+const ED25519_SIGNATURE_LEN: usize = 64;
 const GROUP_SECRET_PARAMS_DERIVE_LABEL: &[u8] =
     b"Signal_ZKGroup_20200424_GroupMasterKey_GroupSecretParams_DeriveFromMasterKey";
 const SERVER_GROUP_ID_DERIVE_LABEL: &[u8] =
@@ -1761,6 +1766,119 @@ pub extern "C" fn signal_protocol_group_cipher_free_plaintext(plaintext: *mut u8
             let layout = std::alloc::Layout::from_size_align(len, 1).unwrap();
             std::alloc::dealloc(plaintext, layout);
         }
+    }
+}
+
+// Ed25519 cryptographic functions for Sealed Sender protocol
+
+#[no_mangle]
+pub extern "C" fn signal_crypto_ed25519_generate_key_pair(
+    out_private_key: *mut u8,
+    out_public_key: *mut u8,
+) -> i32 {
+    if out_private_key.is_null() || out_public_key.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let mut csprng = rng();
+        let key_pair = KeyPair::generate(&mut csprng);
+
+        let private_key_bytes = key_pair.private_key.serialize();
+        let public_key_bytes = key_pair.public_key.public_key_bytes();
+
+        if private_key_bytes.len() != ED25519_PRIVATE_KEY_LEN || public_key_bytes.len() != ED25519_PUBLIC_KEY_LEN {
+            return STATUS_PANIC;
+        }
+
+        unsafe {
+            std::ptr::copy_nonoverlapping(private_key_bytes.as_ptr(), out_private_key, ED25519_PRIVATE_KEY_LEN);
+            std::ptr::copy_nonoverlapping(public_key_bytes.as_ptr(), out_public_key, ED25519_PUBLIC_KEY_LEN);
+        }
+
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_crypto_ed25519_sign(
+    private_key_bytes: *const u8,
+    message_bytes: *const u8,
+    message_len: usize,
+    out_signature: *mut u8,
+) -> i32 {
+    if private_key_bytes.is_null() || message_bytes.is_null() || out_signature.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let private_key_slice = unsafe { std::slice::from_raw_parts(private_key_bytes, ED25519_PRIVATE_KEY_LEN) };
+        let message_slice = unsafe { std::slice::from_raw_parts(message_bytes, message_len) };
+
+        let private_key = match PrivateKey::deserialize(private_key_slice) {
+            Ok(key) => key,
+            Err(_) => return STATUS_DESERIALIZATION_FAILURE,
+        };
+
+        let mut csprng = rng();
+        let signature = match private_key.calculate_signature(message_slice, &mut csprng) {
+            Ok(sig) => sig,
+            Err(_) => return STATUS_PANIC,
+        };
+
+        if signature.len() != ED25519_SIGNATURE_LEN {
+            return STATUS_PANIC;
+        }
+
+        unsafe {
+            std::ptr::copy_nonoverlapping(signature.as_ptr(), out_signature, ED25519_SIGNATURE_LEN);
+        }
+
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_crypto_ed25519_verify(
+    public_key_bytes: *const u8,
+    message_bytes: *const u8,
+    message_len: usize,
+    signature_bytes: *const u8,
+) -> i32 {
+    if public_key_bytes.is_null() || message_bytes.is_null() || signature_bytes.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let public_key_slice = unsafe { std::slice::from_raw_parts(public_key_bytes, ED25519_PUBLIC_KEY_LEN) };
+        let message_slice = unsafe { std::slice::from_raw_parts(message_bytes, message_len) };
+        let signature_slice = unsafe { std::slice::from_raw_parts(signature_bytes, ED25519_SIGNATURE_LEN) };
+
+        let public_key = match PublicKey::from_djb_public_key_bytes(public_key_slice) {
+            Ok(key) => key,
+            Err(_) => return STATUS_DESERIALIZATION_FAILURE,
+        };
+
+        if public_key.verify_signature(message_slice, signature_slice) {
+            STATUS_OK
+        } else {
+            STATUS_VERIFICATION_FAILURE
+        }
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
     }
 }
 

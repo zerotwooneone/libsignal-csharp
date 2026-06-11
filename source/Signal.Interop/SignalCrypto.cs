@@ -22,6 +22,9 @@ public static partial class SignalCrypto
 
     public const int GroupMasterKeyLength = 32;
     public const int UuidLength = 16;
+    public const int Ed25519PrivateKeyLength = 32;
+    public const int Ed25519PublicKeyLength = 32;
+    public const int Ed25519SignatureLength = 64;
 
     internal static partial class Native
     {
@@ -352,6 +355,28 @@ public static partial class SignalCrypto
         internal static partial void signal_protocol_group_cipher_free_plaintext(
             nint plaintext,
             nuint len);
+
+        [LibraryImport(DllName, EntryPoint = "signal_crypto_ed25519_generate_key_pair")]
+        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+        internal static unsafe partial int signal_crypto_ed25519_generate_key_pair(
+            byte* outPrivateKey,
+            byte* outPublicKey);
+
+        [LibraryImport(DllName, EntryPoint = "signal_crypto_ed25519_sign")]
+        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+        internal static unsafe partial int signal_crypto_ed25519_sign(
+            byte* privateKeyBytes,
+            byte* messageBytes,
+            nuint messageLen,
+            byte* outSignature);
+
+        [LibraryImport(DllName, EntryPoint = "signal_crypto_ed25519_verify")]
+        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+        internal static unsafe partial int signal_crypto_ed25519_verify(
+            byte* publicKeyBytes,
+            byte* messageBytes,
+            nuint messageLen,
+            byte* signatureBytes);
     }
 
     public static int TestConnection()
@@ -1446,6 +1471,97 @@ public static partial class SignalCrypto
                 int status = Native.signal_protocol_sender_key_message_deserialize(pBytes, (nuint)bytes.Length, out nint message);
                 ThrowOnError(status);
                 return new SenderKeyMessageSafeHandle(message);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Generates a new Ed25519 key pair for Sealed Sender protocol.
+    /// </summary>
+    /// <param name="outPrivateKey32">A 32-byte span to receive the private key.</param>
+    /// <param name="outPublicKey32">A 32-byte span to receive the public key.</param>
+    /// <exception cref="ArgumentException">Thrown if output spans are not exactly 32 bytes.</exception>
+    /// <exception cref="CryptographicException">Thrown if key generation fails.</exception>
+    public static void GenerateEd25519KeyPair(Span<byte> outPrivateKey32, Span<byte> outPublicKey32)
+    {
+        if (outPrivateKey32.Length != Ed25519PrivateKeyLength)
+        {
+            throw new ArgumentException($"Output private key span must be exactly {Ed25519PrivateKeyLength} bytes.", nameof(outPrivateKey32));
+        }
+        if (outPublicKey32.Length != Ed25519PublicKeyLength)
+        {
+            throw new ArgumentException($"Output public key span must be exactly {Ed25519PublicKeyLength} bytes.", nameof(outPublicKey32));
+        }
+
+        unsafe
+        {
+            fixed (byte* pPrivateKey = outPrivateKey32)
+            fixed (byte* pPublicKey = outPublicKey32)
+            {
+                int status = Native.signal_crypto_ed25519_generate_key_pair(pPrivateKey, pPublicKey);
+                ThrowOnError(status);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Signs a message using an Ed25519 private key.
+    /// </summary>
+    /// <param name="privateKey32">The 32-byte private key.</param>
+    /// <param name="message">The message to sign.</param>
+    /// <param name="outSignature64">A 64-byte span to receive the signature.</param>
+    /// <exception cref="ArgumentException">Thrown if input/output spans have incorrect lengths.</exception>
+    /// <exception cref="CryptographicException">Thrown if signing fails.</exception>
+    public static void Ed25519Sign(ReadOnlySpan<byte> privateKey32, ReadOnlySpan<byte> message, Span<byte> outSignature64)
+    {
+        if (privateKey32.Length != Ed25519PrivateKeyLength)
+        {
+            throw new ArgumentException($"Private key must be exactly {Ed25519PrivateKeyLength} bytes.", nameof(privateKey32));
+        }
+        if (outSignature64.Length != Ed25519SignatureLength)
+        {
+            throw new ArgumentException($"Output signature span must be exactly {Ed25519SignatureLength} bytes.", nameof(outSignature64));
+        }
+
+        unsafe
+        {
+            fixed (byte* pPrivateKey = privateKey32)
+            fixed (byte* pMessage = message)
+            fixed (byte* pSignature = outSignature64)
+            {
+                int status = Native.signal_crypto_ed25519_sign(pPrivateKey, pMessage, (nuint)message.Length, pSignature);
+                ThrowOnError(status);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Verifies an Ed25519 signature against a message and public key.
+    /// </summary>
+    /// <param name="publicKey32">The 32-byte public key.</param>
+    /// <param name="message">The message that was signed.</param>
+    /// <param name="signature64">The 64-byte signature to verify.</param>
+    /// <returns>True if the signature is valid, false otherwise.</returns>
+    /// <exception cref="ArgumentException">Thrown if input spans have incorrect lengths.</exception>
+    public static bool Ed25519Verify(ReadOnlySpan<byte> publicKey32, ReadOnlySpan<byte> message, ReadOnlySpan<byte> signature64)
+    {
+        if (publicKey32.Length != Ed25519PublicKeyLength)
+        {
+            throw new ArgumentException($"Public key must be exactly {Ed25519PublicKeyLength} bytes.", nameof(publicKey32));
+        }
+        if (signature64.Length != Ed25519SignatureLength)
+        {
+            throw new ArgumentException($"Signature must be exactly {Ed25519SignatureLength} bytes.", nameof(signature64));
+        }
+
+        unsafe
+        {
+            fixed (byte* pPublicKey = publicKey32)
+            fixed (byte* pMessage = message)
+            fixed (byte* pSignature = signature64)
+            {
+                int status = Native.signal_crypto_ed25519_verify(pPublicKey, pMessage, (nuint)message.Length, pSignature);
+                return status == StatusOk;
             }
         }
     }
