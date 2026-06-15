@@ -108,6 +108,24 @@ Primary entrypoint:
         - Returns the plaintext.
         - Uses the VTable-based SenderKeyStore for key state management.
 
+    - **`public static byte[] SerializeSenderKeyDistributionMessage(SenderKeyDistributionMessageSafeHandle message)`**
+        - Serializes a SenderKeyDistributionMessage to a byte array.
+        - Intended use: persisting or transmitting distribution messages.
+
+    - **`public static SenderKeyDistributionMessageSafeHandle DeserializeSenderKeyDistributionMessage(ReadOnlySpan<byte> bytes)`**
+        - Reconstructs a SenderKeyDistributionMessage from serialized bytes.
+        - Throws `ArgumentException` if `bytes.Length == 0`.
+        - Throws `CryptographicException` if native deserialization fails.
+
+    - **`public static byte[] SerializeSenderKeyMessage(SenderKeyMessageSafeHandle message)`**
+        - Serializes a SenderKeyMessage to a byte array.
+        - Intended use: persisting or transmitting encrypted group messages.
+
+    - **`public static SenderKeyMessageSafeHandle DeserializeSenderKeyMessage(ReadOnlySpan<byte> bytes)`**
+        - Reconstructs a SenderKeyMessage from serialized bytes.
+        - Throws `ArgumentException` if `bytes.Length == 0`.
+        - Throws `CryptographicException` if native deserialization fails.
+
     - **`public static void GenerateEd25519KeyPair(Span<byte> outPrivateKey32, Span<byte> outPublicKey32)`**
         - Generates a new Ed25519 key pair for Sealed Sender protocol.
         - `outPrivateKey32` and `outPublicKey32` must be exactly 32 bytes each.
