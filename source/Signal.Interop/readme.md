@@ -108,6 +108,32 @@ Primary entrypoint:
         - Returns the plaintext.
         - Uses the VTable-based SenderKeyStore for key state management.
 
+    - **`public static void GenerateEd25519KeyPair(Span<byte> outPrivateKey32, Span<byte> outPublicKey32)`**
+        - Generates a new Ed25519 key pair for Sealed Sender protocol.
+        - `outPrivateKey32` and `outPublicKey32` must be exactly 32 bytes each.
+        - Allocation-free.
+        - Throws `ArgumentException` if output spans are not exactly 32 bytes.
+        - Throws `CryptographicException` if key generation fails.
+
+    - **`public static void Ed25519Sign(ReadOnlySpan<byte> privateKey32, ReadOnlySpan<byte> message, Span<byte> outSignature64)`**
+        - Signs a message using an Ed25519 private key.
+        - `privateKey32` must be exactly 32 bytes.
+        - `outSignature64` must be exactly 64 bytes.
+        - Allocation-free.
+        - Throws `ArgumentException` if input/output spans have incorrect lengths.
+        - Throws `CryptographicException` if signing fails.
+
+    - **`public static bool Ed25519Verify(ReadOnlySpan<byte> publicKey32, ReadOnlySpan<byte> message, ReadOnlySpan<byte> signature64)`**
+        - Verifies an Ed25519 signature against a message and public key.
+        - `publicKey32` must be exactly 32 bytes.
+        - `signature64` must be exactly 64 bytes.
+        - Returns `true` if the signature is valid, `false` otherwise.
+        - Throws `ArgumentException` if input spans have incorrect lengths.
+
+    - **`public const int Ed25519PrivateKeyLength = 32`**
+    - **`public const int Ed25519PublicKeyLength = 32`**
+    - **`public const int Ed25519SignatureLength = 64`**
+
 SafeHandle types (opaque native ownership):
 
 - **`public sealed class GroupSecretParamsSafeHandle : SafeHandle`**
@@ -233,6 +259,22 @@ These functions are exported from the native library and are consumed by the C# 
     - `int32 signal_protocol_group_cipher_decrypt(const void* vtable, const void* sender_address, const void* message, uint8_t** out_plaintext, size_t* out_plaintext_len)`
         - Decrypts a message using GroupCipher with VTable-based SenderKeyStore.
     - `void signal_protocol_group_cipher_free_plaintext(uint8_t* plaintext, size_t len)`
+
+- **Ed25519 (Sealed Sender)**
+    - `int32 signal_crypto_ed25519_generate_key_pair(uint8_t* out_private_key, uint8_t* out_public_key)`
+        - Generates a new Ed25519 key pair.
+        - `out_private_key` and `out_public_key` must point to 32-byte buffers.
+        - Allocation-free; caller allocates buffers.
+    - `int32 signal_crypto_ed25519_sign(const uint8_t* private_key_bytes, const uint8_t* message_bytes, size_t message_len, uint8_t* out_signature)`
+        - Signs a message using an Ed25519 private key.
+        - `private_key_bytes` must be exactly 32 bytes.
+        - `out_signature` must point to a 64-byte buffer.
+        - Allocation-free; caller allocates buffer.
+    - `int32 signal_crypto_ed25519_verify(const uint8_t* public_key_bytes, const uint8_t* message_bytes, size_t message_len, const uint8_t* signature_bytes)`
+        - Verifies an Ed25519 signature.
+        - `public_key_bytes` must be exactly 32 bytes.
+        - `signature_bytes` must be exactly 64 bytes.
+        - Returns `0` on success, `3` on verification failure.
 
 ### Usage notes (C-ABI)
 
