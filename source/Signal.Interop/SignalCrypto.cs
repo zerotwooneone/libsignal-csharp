@@ -500,6 +500,65 @@ public static partial class SignalCrypto
         }
     }
 
+    public static byte[] SerializeServerPublicParams(ServerPublicParamsSafeHandle publicParams)
+    {
+        ArgumentNullException.ThrowIfNull(publicParams);
+        if (publicParams.IsInvalid)
+        {
+            throw new ArgumentException("Handle is invalid.", nameof(publicParams));
+        }
+
+        bool addedRef = false;
+        try
+        {
+            publicParams.DangerousAddRef(ref addedRef);
+            nint handle = publicParams.DangerousGetHandle();
+
+            int status = Native.signal_zkgroup_server_public_params_get_serialized_len(handle, out nuint len);
+            ThrowOnError(status);
+
+            byte[] buffer = new byte[len];
+            unsafe
+            {
+                fixed (byte* pBuffer = buffer)
+                {
+                    status = Native.signal_zkgroup_server_public_params_serialize(handle, pBuffer, len);
+                    ThrowOnError(status);
+                }
+            }
+
+            return buffer;
+        }
+        finally
+        {
+            if (addedRef)
+            {
+                publicParams.DangerousRelease();
+            }
+        }
+    }
+
+    public static ServerPublicParamsSafeHandle DeserializeServerPublicParams(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length == 0)
+        {
+            throw new ArgumentException("Bytes cannot be empty.", nameof(bytes));
+        }
+
+        unsafe
+        {
+            fixed (byte* pBytes = bytes)
+            {
+                int status = Native.signal_zkgroup_server_public_params_deserialize(
+                    pBytes,
+                    (nuint)bytes.Length,
+                    out nint publicParams);
+                ThrowOnError(status);
+                return new ServerPublicParamsSafeHandle(publicParams);
+            }
+        }
+    }
+
     public static AuthCredentialWithPniResponseSafeHandle IssueAuthCredentialWithPni(
         ReadOnlySpan<byte> aciBytes16,
         ReadOnlySpan<byte> pniBytes16,
@@ -810,6 +869,65 @@ public static partial class SignalCrypto
                     out nint presentation);
                 ThrowOnError(status);
                 return new AuthCredentialWithPniPresentationSafeHandle(presentation);
+            }
+        }
+    }
+
+    public static byte[] SerializeGroupPublicParams(GroupPublicParamsSafeHandle publicParams)
+    {
+        ArgumentNullException.ThrowIfNull(publicParams);
+        if (publicParams.IsInvalid)
+        {
+            throw new ArgumentException("Handle is invalid.", nameof(publicParams));
+        }
+
+        bool addedRef = false;
+        try
+        {
+            publicParams.DangerousAddRef(ref addedRef);
+            nint handle = publicParams.DangerousGetHandle();
+
+            int status = Native.signal_zkgroup_group_public_params_get_serialized_len(handle, out nuint len);
+            ThrowOnError(status);
+
+            byte[] buffer = new byte[len];
+            unsafe
+            {
+                fixed (byte* pBuffer = buffer)
+                {
+                    status = Native.signal_zkgroup_group_public_params_serialize(handle, pBuffer, len);
+                    ThrowOnError(status);
+                }
+            }
+
+            return buffer;
+        }
+        finally
+        {
+            if (addedRef)
+            {
+                publicParams.DangerousRelease();
+            }
+        }
+    }
+
+    public static GroupPublicParamsSafeHandle DeserializeGroupPublicParams(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length == 0)
+        {
+            throw new ArgumentException("Bytes cannot be empty.", nameof(bytes));
+        }
+
+        unsafe
+        {
+            fixed (byte* pBytes = bytes)
+            {
+                int status = Native.signal_zkgroup_group_public_params_deserialize(
+                    pBytes,
+                    (nuint)bytes.Length,
+                    out nint publicParams);
+                ThrowOnError(status);
+                return new GroupPublicParamsSafeHandle(publicParams);
             }
         }
     }

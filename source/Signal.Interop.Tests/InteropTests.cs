@@ -297,6 +297,112 @@ public class InteropTests
     }
 
     [Fact]
+    public void GroupPublicParams_SerializeDeserialize_RoundTripsSuccessfully()
+    {
+        // Arrange
+        Span<byte> groupRand = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        groupRand.Fill(20);
+        using GroupSecretParamsSafeHandle groupSecret = SignalCrypto.GenerateGroupSecretParams(groupRand);
+        using GroupPublicParamsSafeHandle originalPublicParams = SignalCrypto.GetGroupPublicParams(groupSecret);
+
+        // Act - Serialize
+        byte[] serializedBytes = SignalCrypto.SerializeGroupPublicParams(originalPublicParams);
+
+        // Act - Deserialize
+        using GroupPublicParamsSafeHandle deserializedPublicParams = SignalCrypto.DeserializeGroupPublicParams(serializedBytes);
+
+        // Assert - If we can successfully deserialize without an exception, the FFI boundary is working.
+        // To be absolutely certain, let's try to use the deserialized handle in a verification step.
+        // We'll create a dummy presentation flow to prove the deserialized public params are mathematically sound.
+        Span<byte> serverRand = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        serverRand.Fill(21);
+        using ServerSecretParamsSafeHandle serverSecret = SignalCrypto.GenerateServerSecretParams(serverRand);
+        using ServerPublicParamsSafeHandle serverPublic = SignalCrypto.GetServerPublicParams(serverSecret);
+
+        Span<byte> aci = stackalloc byte[SignalCrypto.UuidLength];
+        Span<byte> pni = stackalloc byte[SignalCrypto.UuidLength];
+        aci.Fill((byte)'g');
+        pni.Fill((byte)'p');
+
+        const ulong redemptionTime = 40000UL * 86400UL;
+        Span<byte> issueRand = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        issueRand.Fill(22);
+
+        using AuthCredentialWithPniResponseSafeHandle response = SignalCrypto.IssueAuthCredentialWithPni(
+            aci, pni, redemptionTime, serverSecret, issueRand);
+        using AuthCredentialWithPniSafeHandle credential = SignalCrypto.ReceiveAuthCredentialWithPni(
+            response, aci, pni, redemptionTime, serverPublic);
+
+        Span<byte> presentRand = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        presentRand.Fill(23);
+        using AuthCredentialWithPniPresentationSafeHandle presentation = SignalCrypto.PresentAuthCredentialWithPni(
+            credential, serverPublic, groupSecret, presentRand);
+
+        // Final Assert: Verify using the DESERIALIZED group public params
+        SignalCrypto.VerifyAuthCredentialWithPniPresentation(
+            presentation,
+            serverSecret,
+            deserializedPublicParams,
+            redemptionTime);
+
+        Assert.True(true);
+    }
+
+    [Fact]
+    public void ServerPublicParams_SerializeDeserialize_RoundTripsSuccessfully()
+    {
+        // Arrange
+        Span<byte> serverRand = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        serverRand.Fill(30);
+        using ServerSecretParamsSafeHandle serverSecret = SignalCrypto.GenerateServerSecretParams(serverRand);
+        using ServerPublicParamsSafeHandle originalPublicParams = SignalCrypto.GetServerPublicParams(serverSecret);
+
+        // Act - Serialize
+        byte[] serializedBytes = SignalCrypto.SerializeServerPublicParams(originalPublicParams);
+
+        // Act - Deserialize
+        using ServerPublicParamsSafeHandle deserializedPublicParams = SignalCrypto.DeserializeServerPublicParams(serializedBytes);
+
+        // Assert - If we can successfully deserialize without an exception, the FFI boundary is working.
+        // Let's prove they are mathematically sound by running a presentation flow.
+        Span<byte> groupRand = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        groupRand.Fill(31);
+        using GroupSecretParamsSafeHandle groupSecret = SignalCrypto.GenerateGroupSecretParams(groupRand);
+        using GroupPublicParamsSafeHandle groupPublic = SignalCrypto.GetGroupPublicParams(groupSecret);
+
+        Span<byte> aci = stackalloc byte[SignalCrypto.UuidLength];
+        Span<byte> pni = stackalloc byte[SignalCrypto.UuidLength];
+        aci.Fill((byte)'s');
+        pni.Fill((byte)'p');
+
+        const ulong redemptionTime = 50000UL * 86400UL;
+        Span<byte> issueRand = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        issueRand.Fill(32);
+
+        using AuthCredentialWithPniResponseSafeHandle response = SignalCrypto.IssueAuthCredentialWithPni(
+            aci, pni, redemptionTime, serverSecret, issueRand);
+        
+        // Final Assert step 1: Receive using DESERIALIZED server public params
+        using AuthCredentialWithPniSafeHandle credential = SignalCrypto.ReceiveAuthCredentialWithPni(
+            response, aci, pni, redemptionTime, deserializedPublicParams);
+
+        Span<byte> presentRand = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        presentRand.Fill(33);
+        
+        // Final Assert step 2: Present using DESERIALIZED server public params
+        using AuthCredentialWithPniPresentationSafeHandle presentation = SignalCrypto.PresentAuthCredentialWithPni(
+            credential, deserializedPublicParams, groupSecret, presentRand);
+
+        SignalCrypto.VerifyAuthCredentialWithPniPresentation(
+            presentation,
+            serverSecret,
+            groupPublic,
+            redemptionTime);
+
+        Assert.True(true);
+    }
+
+    [Fact]
     public void Generate_WithWrongLengthRandomness_ThrowsArgumentException()
     {
         // Arrange
