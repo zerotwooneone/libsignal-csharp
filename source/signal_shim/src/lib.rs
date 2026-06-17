@@ -848,6 +848,85 @@ pub extern "C" fn signal_zkgroup_auth_credential_with_pni_presentation_verify(
 }
 
 #[no_mangle]
+pub extern "C" fn signal_zkgroup_auth_credential_with_pni_presentation_serialize_len(
+    presentation: *const c_void,
+    out_len: *mut usize,
+) -> i32 {
+    if out_len.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let pres = unsafe { &*presentation.cast::<AuthCredentialWithPniZkcPresentation>() };
+        get_serialized_len(pres, out_len)
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_auth_credential_with_pni_presentation_serialize(
+    presentation: *const c_void,
+    out_buffer: *mut u8,
+    buffer_len: usize,
+) -> i32 {
+    if presentation.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let pres = unsafe { &*presentation.cast::<AuthCredentialWithPniZkcPresentation>() };
+        write_serialized_to_buffer(pres, out_buffer, buffer_len)
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_zkgroup_auth_credential_with_pni_presentation_deserialize(
+    bytes: *const u8,
+    bytes_len: usize,
+    out_presentation: *mut *mut c_void,
+) -> i32 {
+    if out_presentation.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    unsafe {
+        *out_presentation = std::ptr::null_mut();
+    }
+
+    if bytes.is_null() || bytes_len == 0 {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let slice = unsafe { std::slice::from_raw_parts(bytes, bytes_len) };
+        let pres: AuthCredentialWithPniZkcPresentation = match zkgroup::deserialize(slice) {
+            Ok(v) => v,
+            Err(_) => return STATUS_DESERIALIZATION_FAILURE,
+        };
+
+        let boxed = Box::new(pres);
+        unsafe {
+            *out_presentation = Box::into_raw(boxed).cast::<c_void>();
+        }
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn signal_zkgroup_group_secret_params_get_blob_key(
     secret_params: *const c_void,
     out_buffer: *mut u8,

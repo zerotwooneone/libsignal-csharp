@@ -56,6 +56,15 @@ Primary entrypoint:
         - Server-side verification.
         - Throws `CryptographicException` on verification failure.
 
+    - **`public static byte[] SerializeAuthCredentialWithPniPresentation(AuthCredentialWithPniPresentationSafeHandle presentation)`**
+        - Serializes an AuthCredentialWithPniPresentation to a byte array.
+        - Intended use: transmitting presentations over the network.
+
+    - **`public static AuthCredentialWithPniPresentationSafeHandle DeserializeAuthCredentialWithPniPresentation(ReadOnlySpan<byte> presentationBytes)`**
+        - Reconstructs an AuthCredentialWithPniPresentation from serialized bytes.
+        - Throws `ArgumentException` if `presentationBytes.Length == 0`.
+        - Throws `CryptographicException` if native deserialization fails.
+
     - **`public static byte[] SerializeGroupMasterKey(GroupMasterKeySafeHandle masterKey)`**
     - **`public static void SerializeGroupMasterKey(GroupMasterKeySafeHandle masterKey, Span<byte> buffer32)`**
         - Serializes a master key into exactly 32 bytes.

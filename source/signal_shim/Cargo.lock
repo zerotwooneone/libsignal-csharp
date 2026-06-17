@@ -890,7 +890,7 @@ dependencies = [
 
 [[package]]
 name = "libsignal-debug"
-version = "0.94.1"
+version = "0.96.0"
 dependencies = [
  "cfg-if",
 ]

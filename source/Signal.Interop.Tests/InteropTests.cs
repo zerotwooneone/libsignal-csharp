@@ -229,6 +229,74 @@ public class InteropTests
     }
 
     [Fact]
+    public void AuthCredential_Presentation_SerializeDeserialize_RoundTripsSuccessfully()
+    {
+        // Arrange
+        Span<byte> serverRand = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        serverRand.Fill(10);
+        using ServerSecretParamsSafeHandle serverSecret = SignalCrypto.GenerateServerSecretParams(serverRand);
+        using ServerPublicParamsSafeHandle serverPublic = SignalCrypto.GetServerPublicParams(serverSecret);
+
+        Span<byte> groupRand = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        groupRand.Fill(11);
+        using GroupSecretParamsSafeHandle groupSecret = SignalCrypto.GenerateGroupSecretParams(groupRand);
+        using GroupPublicParamsSafeHandle groupPublic = SignalCrypto.GetGroupPublicParams(groupSecret);
+
+        Span<byte> aci = stackalloc byte[SignalCrypto.UuidLength];
+        Span<byte> pni = stackalloc byte[SignalCrypto.UuidLength];
+        aci.Fill((byte)'x');
+        pni.Fill((byte)'y');
+
+        const ulong redemptionTime = 30000UL * 86400UL;
+
+        Span<byte> issueRand = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        issueRand.Fill(12);
+
+        // Step 1: Issue credential
+        using AuthCredentialWithPniResponseSafeHandle response = SignalCrypto.IssueAuthCredentialWithPni(
+            aci,
+            pni,
+            redemptionTime,
+            serverSecret,
+            issueRand);
+
+        // Step 2: Receive credential
+        using AuthCredentialWithPniSafeHandle credential = SignalCrypto.ReceiveAuthCredentialWithPni(
+            response,
+            aci,
+            pni,
+            redemptionTime,
+            serverPublic);
+
+        Span<byte> presentRand = stackalloc byte[SignalCrypto.GroupMasterKeyLength];
+        presentRand.Fill(13);
+
+        // Step 3: Generate original presentation
+        using AuthCredentialWithPniPresentationSafeHandle originalPresentation = SignalCrypto.PresentAuthCredentialWithPni(
+            credential,
+            serverPublic,
+            groupSecret,
+            presentRand);
+
+        // Step 4: Serialize to bytes (FFI boundary test)
+        byte[] serializedBytes = SignalCrypto.SerializeAuthCredentialWithPniPresentation(originalPresentation);
+
+        // Step 5: Deserialize back to new handle (FFI boundary test)
+        using AuthCredentialWithPniPresentationSafeHandle deserializedPresentation =
+            SignalCrypto.DeserializeAuthCredentialWithPniPresentation(serializedBytes);
+
+        // Step 6: Verify the deserialized presentation
+        SignalCrypto.VerifyAuthCredentialWithPniPresentation(
+            deserializedPresentation,
+            serverSecret,
+            groupPublic,
+            redemptionTime);
+
+        // Assert - if we reach here, verification passed
+        Assert.True(true);
+    }
+
+    [Fact]
     public void Generate_WithWrongLengthRandomness_ThrowsArgumentException()
     {
         // Arrange

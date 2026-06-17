@@ -220,6 +220,26 @@ public static partial class SignalCrypto
             nint groupPublicParams,
             ulong redemptionTimeEpochSeconds);
 
+        [LibraryImport(DllName, EntryPoint = "signal_zkgroup_auth_credential_with_pni_presentation_serialize_len")]
+        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+        internal static partial int signal_zkgroup_auth_credential_with_pni_presentation_serialize_len(
+            nint presentation,
+            out nuint outLen);
+
+        [LibraryImport(DllName, EntryPoint = "signal_zkgroup_auth_credential_with_pni_presentation_serialize")]
+        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+        internal static unsafe partial int signal_zkgroup_auth_credential_with_pni_presentation_serialize(
+            nint presentation,
+            byte* outBuffer,
+            nuint bufferLen);
+
+        [LibraryImport(DllName, EntryPoint = "signal_zkgroup_auth_credential_with_pni_presentation_deserialize")]
+        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+        internal static unsafe partial int signal_zkgroup_auth_credential_with_pni_presentation_deserialize(
+            byte* bytes,
+            nuint bytesLen,
+            out nint outPresentation);
+
         [LibraryImport(DllName, EntryPoint = "signal_protocol_sender_key_record_new")]
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
         internal static partial int signal_protocol_sender_key_record_new(out nint outRecord);
@@ -731,6 +751,65 @@ public static partial class SignalCrypto
             if (addedRefPres)
             {
                 presentation.DangerousRelease();
+            }
+        }
+    }
+
+    public static byte[] SerializeAuthCredentialWithPniPresentation(AuthCredentialWithPniPresentationSafeHandle presentation)
+    {
+        ArgumentNullException.ThrowIfNull(presentation);
+        if (presentation.IsInvalid)
+        {
+            throw new ArgumentException("Handle is invalid.", nameof(presentation));
+        }
+
+        bool addedRef = false;
+        try
+        {
+            presentation.DangerousAddRef(ref addedRef);
+            nint handle = presentation.DangerousGetHandle();
+
+            int status = Native.signal_zkgroup_auth_credential_with_pni_presentation_serialize_len(handle, out nuint len);
+            ThrowOnError(status);
+
+            byte[] buffer = new byte[len];
+            unsafe
+            {
+                fixed (byte* pBuffer = buffer)
+                {
+                    status = Native.signal_zkgroup_auth_credential_with_pni_presentation_serialize(handle, pBuffer, len);
+                    ThrowOnError(status);
+                }
+            }
+
+            return buffer;
+        }
+        finally
+        {
+            if (addedRef)
+            {
+                presentation.DangerousRelease();
+            }
+        }
+    }
+
+    public static AuthCredentialWithPniPresentationSafeHandle DeserializeAuthCredentialWithPniPresentation(ReadOnlySpan<byte> presentationBytes)
+    {
+        if (presentationBytes.Length == 0)
+        {
+            throw new ArgumentException("Bytes cannot be empty.", nameof(presentationBytes));
+        }
+
+        unsafe
+        {
+            fixed (byte* pBytes = presentationBytes)
+            {
+                int status = Native.signal_zkgroup_auth_credential_with_pni_presentation_deserialize(
+                    pBytes,
+                    (nuint)presentationBytes.Length,
+                    out nint presentation);
+                ThrowOnError(status);
+                return new AuthCredentialWithPniPresentationSafeHandle(presentation);
             }
         }
     }
