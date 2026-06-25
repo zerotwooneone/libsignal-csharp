@@ -1363,6 +1363,60 @@ pub extern "C" fn signal_protocol_sender_address_new(
 }
 
 #[no_mangle]
+pub extern "C" fn signal_protocol_sender_address_name(
+    address: *const c_void,
+    out_uuid_bytes: *mut u8,
+    out_uuid_len: usize,
+) -> i32 {
+    if address.is_null() || out_uuid_bytes.is_null() || out_uuid_len < UUID_LEN {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let addr = unsafe { &*(address as *const ProtocolAddress) };
+        let name_str = addr.name();
+        
+        match uuid::Uuid::parse_str(name_str) {
+            Ok(u) => {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(u.as_bytes().as_ptr(), out_uuid_bytes, UUID_LEN);
+                }
+                STATUS_OK
+            },
+            Err(_) => STATUS_INVALID_ARGUMENT,
+        }
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn signal_protocol_sender_address_device_id(
+    address: *const c_void,
+    out_device_id: *mut u32,
+) -> i32 {
+    if address.is_null() || out_device_id.is_null() {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let addr = unsafe { &*(address as *const ProtocolAddress) };
+        unsafe {
+            *out_device_id = addr.device_id().into();
+        }
+        STATUS_OK
+    }));
+
+    match result {
+        Ok(code) => code,
+        Err(_) => STATUS_PANIC,
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn signal_protocol_sender_address_free(address: *mut c_void) {
     free_boxed_value(address.cast::<ProtocolAddress>());
 }

@@ -276,6 +276,19 @@ public static partial class SignalCrypto
             uint deviceId,
             out nint outAddress);
 
+        [LibraryImport(DllName, EntryPoint = "signal_protocol_sender_address_name")]
+        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+        internal static unsafe partial int signal_protocol_sender_address_name(
+            nint address,
+            byte* outUuidBytes,
+            nuint outUuidLen);
+
+        [LibraryImport(DllName, EntryPoint = "signal_protocol_sender_address_device_id")]
+        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+        internal static partial int signal_protocol_sender_address_device_id(
+            nint address,
+            out uint outDeviceId);
+
         [LibraryImport(DllName, EntryPoint = "signal_protocol_sender_address_free")]
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
         internal static partial void signal_protocol_sender_address_free(nint address);
@@ -1265,6 +1278,45 @@ public static partial class SignalCrypto
                 return new SenderAddressSafeHandle(address);
             }
         }
+    }
+
+    /// <summary>
+    /// Gets the UUID name from a SenderAddress handle.
+    /// </summary>
+    public static Guid GetSenderAddressName(IntPtr address)
+    {
+        if (address == IntPtr.Zero)
+        {
+            throw new ArgumentException("Address handle cannot be zero.", nameof(address));
+        }
+
+        Span<byte> uuidBytes = stackalloc byte[UuidLength];
+        unsafe
+        {
+            fixed (byte* pUuid = uuidBytes)
+            {
+                int status = Native.signal_protocol_sender_address_name(address, pUuid, (nuint)uuidBytes.Length);
+                ThrowOnError(status);
+            }
+        }
+        
+        return new Guid(uuidBytes);
+    }
+
+    /// <summary>
+    /// Gets the device ID from a SenderAddress handle.
+    /// </summary>
+    public static uint GetSenderAddressDeviceId(IntPtr address)
+    {
+        if (address == IntPtr.Zero)
+        {
+            throw new ArgumentException("Address handle cannot be zero.", nameof(address));
+        }
+
+        int status = Native.signal_protocol_sender_address_device_id(address, out uint deviceId);
+        ThrowOnError(status);
+        
+        return deviceId;
     }
 
     /// <summary>

@@ -42,8 +42,12 @@ public class InMemorySenderKeyStore : IDisposable
 
             Guid distributionId = new Guid(new ReadOnlySpan<byte>(distributionIdBytes, (int)distributionIdLen));
             
-            // Create cache key using sender address pointer value
-            string cacheKey = $"{senderAddress.ToInt64():X16}:{distributionId}";
+            // Extract sender address details to form a proper composite key
+            Guid peerId = SignalCrypto.GetSenderAddressName(senderAddress);
+            uint deviceId = SignalCrypto.GetSenderAddressDeviceId(senderAddress);
+
+            // Create cache key
+            string cacheKey = $"{peerId}:{deviceId}:{distributionId}";
             
             if (_cache.TryGetValue(cacheKey, out byte[]? recordBytes))
             {
@@ -88,8 +92,12 @@ public class InMemorySenderKeyStore : IDisposable
             byte[] recordArray = new byte[recordLen];
             Marshal.Copy(new IntPtr(recordBytes), recordArray, 0, (int)recordLen);
             
-            // Create cache key using sender address pointer value
-            string cacheKey = $"{senderAddress.ToInt64():X16}:{distributionId}";
+            // Extract sender address details to form a proper composite key
+            Guid peerId = SignalCrypto.GetSenderAddressName(senderAddress);
+            uint deviceId = SignalCrypto.GetSenderAddressDeviceId(senderAddress);
+
+            // Create cache key
+            string cacheKey = $"{peerId}:{deviceId}:{distributionId}";
             
             // Store in cache
             _cache[cacheKey] = recordArray;

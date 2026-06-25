@@ -584,6 +584,25 @@ public class InteropTests
 
     // Feature 2: SenderKeyRecord tests
     [Fact]
+    public void SenderAddress_CanExtractNameAndDeviceId()
+    {
+        // Arrange
+        Span<byte> expectedUuid = stackalloc byte[16];
+        expectedUuid.Fill((byte)'c');
+        uint expectedDeviceId = 5;
+
+        // Act
+        using SenderAddressSafeHandle address = SignalCrypto.NewSenderAddress(expectedUuid, expectedDeviceId);
+
+        Guid extractedName = SignalCrypto.GetSenderAddressName(address.DangerousGetHandle());
+        uint extractedDeviceId = SignalCrypto.GetSenderAddressDeviceId(address.DangerousGetHandle());
+
+        // Assert
+        Assert.Equal(new Guid(expectedUuid), extractedName);
+        Assert.Equal(expectedDeviceId, extractedDeviceId);
+    }
+
+    [Fact]
     public void SenderKeyRecord_SerializeDeserialize_RoundTrips()
     {
         // ARRANGE - Create a valid SenderKeyRecord via GroupSessionBuilder
