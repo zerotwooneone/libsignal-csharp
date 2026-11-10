@@ -7,6 +7,13 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <OutputPath>..\..\dist</OutputPath>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    
+    <!-- Idiomatic .NET Native Runtime Identifier detection -->
+    <HostArchitecture>$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString().ToLowerInvariant())</HostArchitecture>
+    <NativeRid Condition="$([MSBuild]::IsOsPlatform('Windows'))">win-$(HostArchitecture)</NativeRid>
+    <NativeRid Condition="$([MSBuild]::IsOsPlatform('Linux'))">linux-$(HostArchitecture)</NativeRid>
+    <NativeRid Condition="$([MSBuild]::IsOsPlatform('OSX'))">osx-$(HostArchitecture)</NativeRid>
+    <NativeRid Condition="'$(NativeRid)' == ''">win-x64</NativeRid>
   </PropertyGroup>
 
   <Target Name="BuildRustShim" BeforeTargets="PreBuildEvent">
@@ -14,19 +21,20 @@
     <Exec Command="cargo build --release" WorkingDirectory="$(MSBuildProjectDirectory)\..\signal_shim" />
   </Target>
 
+  <Target Name="CopyBuiltNativeLibrary" AfterTargets="BuildRustShim" BeforeTargets="PreBuildEvent;PrepareForBuild">
+    <PropertyGroup>
+      <BuiltNativeFile Condition="$([MSBuild]::IsOsPlatform('Windows'))">$(MSBuildProjectDirectory)\..\signal_shim\target\release\signal_shim.dll</BuiltNativeFile>
+      <BuiltNativeFile Condition="$([MSBuild]::IsOsPlatform('Linux'))">$(MSBuildProjectDirectory)\..\signal_shim\target\release\libsignal_shim.so</BuiltNativeFile>
+      <BuiltNativeFile Condition="$([MSBuild]::IsOsPlatform('OSX'))">$(MSBuildProjectDirectory)\..\signal_shim\target\release\libsignal_shim.dylib</BuiltNativeFile>
+    </PropertyGroup>
+    <Message Importance="High" Text="Deploying built native library to runtimes\$(NativeRid)\native..." Condition="Exists('$(BuiltNativeFile)')" />
+    <Copy SourceFiles="$(BuiltNativeFile)" DestinationFolder="$(MSBuildProjectDirectory)\runtimes\$(NativeRid)\native" SkipUnchangedFiles="true" Condition="Exists('$(BuiltNativeFile)')" />
+  </Target>
+
   <ItemGroup>
-    <None Include="..\signal_shim\target\release\signal_shim.dll" Condition="$([MSBuild]::IsOsPlatform('Windows'))">
-      <Link>signal_shim.dll</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="..\signal_shim\target\release\libsignal_shim.so" Condition="$([MSBuild]::IsOsPlatform('Linux'))">
-      <Link>libsignal_shim.so</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="..\signal_shim\target\release\libsignal_shim.dylib" Condition="$([MSBuild]::IsOsPlatform('OSX'))">
-      <Link>libsignal_shim.dylib</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    <!-- Idiomatic .NET runtimes asset layout (copied to output and packaged into NuGet) -->
+    <Content Include="runtimes\**\*" Exclude="runtimes\**\*.gitkeep" CopyToOutputDirectory="PreserveNewest" Pack="true" PackagePath="runtimes" />
+
     <None Include="readme.md">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
